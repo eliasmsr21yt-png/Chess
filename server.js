@@ -41,13 +41,33 @@ const UT = clean(process.env.UPSTASH_REDIS_REST_TOKEN);
 if (UP && !/^https?:\/\//i.test(UP)) UP = 'https://' + UP;
 const USE_UP = !!(UP && UT);
 const SHOP = { fire: 300, bolt: 400, ice: 250, gold: 350, neon: 300, rainbow: 600, lava: 200, storm: 300, night: 100,
-  ghost: 200, toxic: 350, sakura: 500, thunder: 900, diamond: 1500, phoenix: 5000, ocean: 250, forest: 250, rose: 300, galaxy: 1500 };
+  ghost: 200, toxic: 350, sakura: 500, thunder: 900, diamond: 1500, phoenix: 5000, ocean: 250, forest: 250, rose: 300, galaxy: 1500, aurora: 2500, celestial: 12000 };
 const THI = { 5: 'lava', 6: 'storm', 7: 'night', 8: 'ocean', 9: 'forest', 10: 'rose', 11: 'galaxy' };   // Brett-Index -> Shop-Artikel
 const COMP = { win: 'loss', loss: 'win', draw: 'draw' };
 const KEY = 'chess:users';
-// Unterschrift (HMAC): der Server erkennt echte, unveränderte Profile und Bestenlisten-Einträge auch nach einem Neustart.
-// Schlüssel: SESSION_SECRET oder bei Render automatisch die Service-ID (bleibt bei Neustarts gleich).
-const KSEC = clean(process.env.SESSION_SECRET) || clean(process.env.RENDER_SERVICE_ID);
+// Stabiler HMAC-Schlüssel: wichtig, damit gespeicherte Bestenlisten-Einträge
+// nach einem Server-Neustart weiterhin geprüft und wiederhergestellt werden können.
+// Reihenfolge: eigener Schlüssel, Render-Service-ID, Upstash-Token oder lokale Schlüsseldatei.
+function loadSigningSecret() {
+  const configured = clean(process.env.SESSION_SECRET) || clean(process.env.RENDER_SERVICE_ID);
+  if (configured) return configured;
+  if (USE_UP) return crypto.createHash('sha256').update(UT).digest('hex');
+  try {
+    fs.mkdirSync(DIR, { recursive: true });
+    const keyFile = path.join(DIR, 'session.secret');
+    if (fs.existsSync(keyFile)) {
+      const existing = clean(fs.readFileSync(keyFile, 'utf8'));
+      if (existing.length >= 32) return existing;
+    }
+    const fresh = crypto.randomBytes(48).toString('hex');
+    fs.writeFileSync(keyFile, fresh, { mode: 0o600 });
+    return fresh;
+  } catch (e) {
+    console.error('Kein dauerhafter Signaturschlüssel verfügbar. Bitte SESSION_SECRET setzen:', e.message);
+    return '';
+  }
+}
+const KSEC = loadSigningSecret();
 const sig = (...a) => KSEC ? crypto.createHmac('sha256', KSEC).update(a.join('|')).digest('hex').slice(0, 32) : '';
 const pSig = u => sig('p', u.name, u.coins | 0, u.elo | 0, [...(u.owned || [])].sort().join(','), [...(u.bots || [])].sort().join(','));
 const lSig = (n, e, a) => sig('l', n, e | 0, a | 0);

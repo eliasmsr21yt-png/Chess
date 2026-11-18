@@ -177,6 +177,13 @@ input{-webkit-user-select:text;user-select:text;font:inherit}
 @keyframes fl{0%,90%,94%,100%{opacity:0}92%{opacity:.55}96%{opacity:.3}}
 @media (prefers-reduced-motion:reduce){.p[class*=fx-],#bd.lava,#bd.storm::after{animation:none}}
 @media (prefers-reduced-motion:reduce){.q.k::before,.dt,.spin{animation:none}}
+
+/* Neue Shop-Effekte */
+.p.fx-aurora{color:transparent!important;background:linear-gradient(135deg,#80deea,#b388ff,#69f0ae,#80deea);background-size:260% 260%;-webkit-background-clip:text;background-clip:text;filter:drop-shadow(0 0 7px rgba(128,222,234,.9));animation:auroraGlow 3s ease-in-out infinite}
+@keyframes auroraGlow{0%,100%{background-position:0 50%;filter:drop-shadow(0 0 5px #80deea)}50%{background-position:100% 50%;filter:drop-shadow(0 0 13px #b388ff)}}
+.p.fx-celestial{color:#fff4b0!important;text-shadow:0 0 3px #fff,0 0 9px #ffd54f,0 0 18px #7c4dff,0 0 30px #2979ff;animation:celestialPulse 1.8s ease-in-out infinite alternate}
+.p.fx-celestial::before{content:'✦';position:absolute;font-size:.36em;top:-.35em;right:-.25em;color:#fff4b0;text-shadow:0 0 8px #fff,0 0 14px #7c4dff}
+@keyframes celestialPulse{to{filter:brightness(1.45) drop-shadow(0 0 10px #7c4dff)}}
 </style>
 </head>
 <body>
@@ -226,7 +233,7 @@ let mo=true,started=false,mm='',scr='home',mode='bot',lvl=2,bl=2,opp={n:'Bot Stu
 let socket=null,onlineSide='w',roomCode='',onlineReady=false,onlineStatus='',lastNetMove=null;
 let rated=false,BL=null,oppLk=null,pc='',sbot=0,ip=null;
 let ef={w:'',b:''},P=null,AU=null,SHOP={},note='',authMsg='',pnm='',sent=0,dg=null,dm=0,dd=0,lastBuy='',anm='',apw='',pax=null,atm=0,rst=0,LB=null,lbq=0,PS=null,otc=5,gtc=5,FR=[],FRN=[],frq=0,frn='',ivs=[],pmOn=false,pm=[],nn='',sentB=0,glv=0;
-const SK={fire:{n:'Feuer',c:'#ff6d00',e:'🔥'},bolt:{n:'Blitz',c:'#ffee58',e:'⚡'},ice:{n:'Eis',c:'#80d8ff',e:'❄'},gold:{n:'Gold',c:'#ffc400',e:'★'},neon:{n:'Neon',c:'#69f0ae',e:'✦'},rainbow:{n:'Regenbogen',c:'#ff4081',e:'✺'},ghost:{n:'Geist',c:'#cfe8ff',e:'👻'},toxic:{n:'Gift',c:'#76ff03',e:'☣'},sakura:{n:'Sakura',c:'#ff8ab8',e:'🌸'},thunder:{n:'Donner',c:'#b388ff',e:'⛈'},diamond:{n:'Diamant',c:'#e0f7fa',e:'💎'},phoenix:{n:'Phönix',c:'#ff7043',e:'✨',L:1}};
+const SK={fire:{n:'Feuer',c:'#ff6d00',e:'🔥'},bolt:{n:'Blitz',c:'#ffee58',e:'⚡'},ice:{n:'Eis',c:'#80d8ff',e:'❄'},gold:{n:'Gold',c:'#ffc400',e:'★'},neon:{n:'Neon',c:'#69f0ae',e:'✦'},rainbow:{n:'Regenbogen',c:'#ff4081',e:'✺'},ghost:{n:'Geist',c:'#cfe8ff',e:'👻'},toxic:{n:'Gift',c:'#76ff03',e:'☣'},sakura:{n:'Sakura',c:'#ff8ab8',e:'🌸'},thunder:{n:'Donner',c:'#b388ff',e:'⛈'},diamond:{n:'Diamant',c:'#e0f7fa',e:'💎'},phoenix:{n:'Phönix',c:'#ff7043',e:'✨',L:1},aurora:{n:'Aurora',c:'#80deea',e:'🌌'},celestial:{n:'Celestial',c:'#fff4b0',e:'✦',L:1}};
 const esc=s=>String(s).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';'),own=id=>!!(P&&P.owned&&P.owned.includes(id));
 const efc=s=>{const x=lk0().ef[s];return x?' fx-'+x:''},bxc=()=>{const L=lk0();return[L.th.w,L.th.b].map(i=>TH[i]&&TH[i].x).filter(Boolean).join(' ')};
 const pers=()=>{try{localStorage.setItem('chessAuth',JSON.stringify(AU));localStorage.setItem('chessProfile',JSON.stringify(P));localStorage.setItem('chessElo',elo)}catch(x){}};
