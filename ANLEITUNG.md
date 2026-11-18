@@ -120,3 +120,26 @@ Der Service-Worker-Cache wurde auf `schach-v6` erhöht. Nach dem Hochladen auf G
 
 ### Tests in Update 14
 `npm test` umfasst jetzt zusätzlich die Turnierbaum-Vorschau für sieben Spieler, das kompakte vierseitige FFA-Brett und gemeinsame FFA-Allianzen.
+
+
+## Update 15 – Kompakteres FFA-Brett und Turnier-Ergebnisbildschirm
+
+- Das FFA-Brett wird jetzt in einer festen, zentrierten Breite von maximal 360 px angezeigt; auf kleinen Displays maximal 340 px bzw. die verfügbare Bildschirmbreite. Es füllt nicht länger den gesamten verfügbaren Bereich. Die Zoom-Funktion bleibt erhalten, ist aber auf 160 % begrenzt.
+- Nach einem Turniermatch bleibt zuerst der normale Ergebnisbildschirm mit „Du hast gewonnen“ bzw. „Du hast verloren“ geöffnet.
+- Von diesem Ergebnisbildschirm kann man gezielt zum Turnierbaum, zur Auswahl laufender Spiele zum Zuschauen oder in ein separates Bot-Training wechseln.
+- Ein direkt folgendes Trostrunden-Match unterbricht den Ergebnisbildschirm nicht. Das Match ist im Turnierbaum auswählbar und startet für den Spieler erst, wenn er es dort öffnet.
+- Der App-Cache wurde auf `schach-v7` erhöht. Nach dem Hochladen auf GitHub bitte Render neu deployen und installierte Apps vollständig neu laden.
+
+Prüfung: `npm test` sowie die Syntaxprüfung des eingebetteten Frontend-JavaScripts. Ein echter Test mit verbundenen Browsern/Socket.IO-Clients ist weiterhin separat nach dem Deployment durchzuführen.
+
+
+## Update 16 – FFA-Brett wie auf dem Foto
+
+- Das frühere große, quadratische Brett wurde durch ein echtes vierseitiges Brettlayout ersetzt: 10×10 grün-beige Schachfelder in der Mitte, vier helle Startstreifen und abgeschrägte Plattenecken.
+- Die Startaufstellung ist jetzt eindeutig: Gelb oben, Grün rechts, Blau unten und Rot links. Jeder Spieler startet mit zehn Figuren in zwei Reihen.
+- Bei mehr als vier Spielern weist der Host Spieler einer der vier Seiten/Allianzen zu. Beispiel: zwei Spieler auf Gelb gegen einen Spieler auf Grün (2 gegen 1). Mitglieder einer Allianz teilen die Farbe und können einander nicht schlagen.
+- Mehrere Spieler auf derselben Seite bekommen getrennte Startblöcke. Pro Seite sind maximal vier Spieler vorgesehen; die übrigen müssen auf weitere Seiten verteilt werden.
+- Das Brett passt sich Desktop und Smartphone an. Die Ecken sind keine Spielfelder, und Langstreckenzüge dürfen nicht durch diese Bereiche abkürzen.
+- Die Service-Worker-Version wurde auf `schach-v8` erhöht, damit installierte Apps die neue Brettdarstellung laden.
+
+Prüfung: `npm test` (23 automatisierte Tests) und `node --check` für Server und eingebettetes Frontend-JavaScript. Ein echter Mehrbrowser-Test mit mehreren Live-Socket-Verbindungen ist weiterhin nach dem Deployment erforderlich.

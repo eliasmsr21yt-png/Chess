@@ -427,7 +427,9 @@ function partyStart(s,p) {
   }
   if(p.mode==='ffa') {
     if(p.players.length<2)return s.emit('room:error',{message:'Für Alle gegen Alle werden mindestens zwei Spieler benötigt.'});
-    const state=createFFAState(p);
+    const preview=createFFAState(p),sideCounts=[0,1,2,3].map(side=>preview.players.filter(x=>x.sideIndex===side).length);
+    if(sideCounts.some(count=>count>4))return s.emit('room:error',{message:'Auf jeder Brettseite können höchstens vier Spieler starten. Bitte verteile die Spieler auf mehr Seiten.'});
+    const state=preview;
     p.ffa=state;p.status='running';
     io.to('party:'+p.code).emit('ffa:start',ffaPublic(state));
     broadcastParty(p);return;
@@ -436,39 +438,78 @@ function partyStart(s,p) {
 }
 function ffaPublic(f) {
   if(!f)return null;
-  return {size:f.size,board:f.board,players:f.players.map(x=>({...x,connected:!(f.offline||[]).includes(x.key)})),order:f.order,alive:f.alive,turn:f.turn,turnKey:f.order[f.turn]||null,winner:f.winner||null,winnerTeam:f.winnerTeam||null,coWinners:f.coWinners||[],moves:f.moves||0};
+  return {size:f.size,board:f.board,cells:f.cells||null,layout:f.layout||'legacy',players:f.players.map(x=>({...x,connected:!(f.offline||[]).includes(x.key)})),order:f.order,alive:f.alive,turn:f.turn,turnKey:f.order[f.turn]||null,winner:f.winner||null,winnerTeam:f.winnerTeam||null,coWinners:f.coWinners||[],moves:f.moves||0};
 }
-const FFA_TYPES=['R','N','B','Q','K','B','N','R','P','P'];
+// Vierseitiges Brett wie beim Vorbild: ein 10x10-Schachfeld in der Mitte,
+// vier Startstreifen außen und abgeschrägte, helle Eckbereiche.
+const FFA_BACK_RANK=['R','N','B','Q','K'];
+const FFA_PAWN_RANK=['P','P','P','P','P'];
+const FFA_SIDES=[
+  {id:'top',color:'#f4b51b',forward:{x:0,y:1}},       // Gelb
+  {id:'right',color:'#16b978',forward:{x:-1,y:0}},   // Grün
+  {id:'bottom',color:'#2854b8',forward:{x:0,y:-1}},  // Blau
+  {id:'left',color:'#d62828',forward:{x:1,y:0}}     // Rot
+];
 function createFFAState(p) {
-  const n=p.players.length,size=Math.min(26,14+Math.ceil(Math.max(0,n-4)/4)*4),center=(size-1)/2;
-  const colors=['#e53935','#1e88e5','#43a047','#f9a825','#8e24aa','#00acc1','#f4511e','#6d4c41','#d81b60','#3949ab','#7cb342','#fb8c00','#00897b','#5e35b1','#c0ca33','#546e7a'];
-  const board=Array(size*size).fill(null),players=p.players.map((m,i)=>{
-    const a=(Math.PI*2*i/n)-Math.PI/2,rx=Math.cos(a),ry=Math.sin(a);
-    let fx=Math.round(-rx),fy=Math.round(-ry);
-    if(Math.abs(fx)+Math.abs(fy)!==1){if(Math.abs(rx)>Math.abs(ry)){fx=rx>0?-1:1;fy=0}else{fy=ry>0?-1:1;fx=0}}
-    const assigned=p.ffaTeams&&p.ffaTeams[m.key],teamId=assigned&&assigned!=='solo'?'team-'+assigned:'solo-'+m.key;
-    return {key:m.key,name:m.name,color:colors[i],forward:{x:fx,y:fy},alive:true,teamId,teamName:assigned&&assigned!=='solo'?'Gruppe '+assigned:m.name};
+  const members=p.players||[],sideOf=new Map(),groups=new Map();
+  const explicitlyUsed=new Set(members.map(m=>p.ffaTeams&&p.ffaTeams[m.key]&&p.ffaTeams[m.key]!=='solo'?Math.max(0,Math.min(3,Number(p.ffaTeams[m.key])-1)):null).filter(x=>x!==null));
+  const soloMembers=members.filter(m=>!(p.ffaTeams&&p.ffaTeams[m.key]&&p.ffaTeams[m.key]!=='solo'));
+  const freeSides=[0,1,2,3].filter(side=>!explicitlyUsed.has(side));
+  const naturalSeats=soloMembers.length===2?[0,2]:soloMembers.length===3?[0,1,2]:[0,1,2,3];
+  const soloSeats=explicitlyUsed.size?(freeSides.length?freeSides:[0,1,2,3]):naturalSeats;
+  let soloIndex=0;
+  members.forEach((m,i)=>{
+    const assigned=p.ffaTeams&&p.ffaTeams[m.key];
+    // Gruppe 1-4 legt die Brettseite und Allianz fest; Einzelspieler werden
+    // zunächst gegenüberliegend bzw. im Uhrzeigersinn verteilt.
+    const sideIndex=assigned&&assigned!=='solo'?Math.max(0,Math.min(3,Number(assigned)-1)):soloSeats[soloIndex++%soloSeats.length];
+    sideOf.set(m.key,sideIndex);
+    if(!groups.has(sideIndex))groups.set(sideIndex,[]);
+    groups.get(sideIndex).push(m);
   });
-  players.forEach((pl,i)=>{
-    const a=(Math.PI*2*i/n)-Math.PI/2,rx=Math.cos(a),ry=Math.sin(a),tx=-ry,ty=rx;
-    for(let j=0;j<FFA_TYPES.length;j++){
-      const offset=(j-4.5)*0.72,rad=Math.max(2,size/2-2);
-      let x=Math.round(center+rx*rad+tx*offset),y=Math.round(center+ry*rad+ty*offset);
-      x=Math.max(0,Math.min(size-1,x));y=Math.max(0,Math.min(size-1,y));
-      let at=y*size+x;
-      if(board[at]) {
-        // Bei dicht stehenden Spielern wird die nächste freie Zelle auf der eigenen Startkante verwendet.
-        let found=-1;for(let d=1;d<size*size;d++){const q=(at+d)%(size*size);if(!board[q]){found=q;break;}}
-        if(found>=0)at=found;
+  const maxPerSide=Math.max(1,...[0,1,2,3].map(side=>(groups.get(side)||[]).length));
+  const depth=maxPerSide*2,size=10+depth*2,board=Array(size*size).fill(null);
+  const cells=Array(size*size).fill(false);
+  // Kreuzfläche: 10x10 Mitte plus vier 10 Felder breite Startarme.
+  for(let y=0;y<size;y++)for(let x=0;x<size;x++){
+    const inCenter=x>=depth&&x<depth+10&&y>=depth&&y<depth+10;
+    const inTopBottom=x>=depth&&x<depth+10&&(y<depth||y>=depth+10);
+    const inLeftRight=y>=depth&&y<depth+10&&(x<depth||x>=depth+10);
+    cells[y*size+x]=inCenter||inTopBottom||inLeftRight;
+  }
+  const players=members.map(m=>{
+    const assigned=p.ffaTeams&&p.ffaTeams[m.key],sideIndex=sideOf.get(m.key),side=FFA_SIDES[sideIndex];
+    const sideMembers=groups.get(sideIndex)||[],sideSlot=sideMembers.findIndex(x=>x.key===m.key);
+    const teamId=assigned&&assigned!=='solo'?'team-'+assigned:'solo-'+m.key;
+    return {key:m.key,name:m.name,color:side.color,side:side.id,sideIndex,sideSlot,forward:{...side.forward},alive:true,teamId,teamName:assigned&&assigned!=='solo'?'Gruppe '+assigned:m.name};
+  });
+  const place=(x,y,piece)=>{if(x>=0&&x<size&&y>=0&&y<size&&cells[y*size+x])board[y*size+x]=piece;};
+  players.forEach(pl=>{
+    // Zwei Reihen mit je fünf Figuren. Mehrere Verbündete teilen eine
+    // Brettseite, erhalten aber getrennte Startblöcke entlang des Arms.
+    const slot=pl.sideSlot,outer=slot*2,inner=outer+1;
+    for(let k=0;k<5;k++){
+      const major=FFA_BACK_RANK[k],pawn=FFA_PAWN_RANK[k],majorOffset=k*2,pawnOffset=k*2+1;
+      if(pl.side==='top'){
+        place(depth+majorOffset,outer,{type:major,owner:pl.key});
+        place(depth+pawnOffset,inner,{type:pawn,owner:pl.key});
+      } else if(pl.side==='bottom'){
+        place(depth+majorOffset,size-1-outer,{type:major,owner:pl.key});
+        place(depth+pawnOffset,size-2-outer,{type:pawn,owner:pl.key});
+      } else if(pl.side==='left'){
+        place(outer,depth+majorOffset,{type:major,owner:pl.key});
+        place(inner,depth+pawnOffset,{type:pawn,owner:pl.key});
+      } else {
+        place(size-1-outer,depth+majorOffset,{type:major,owner:pl.key});
+        place(size-2-outer,depth+pawnOffset,{type:pawn,owner:pl.key});
       }
-      board[at]={type:FFA_TYPES[j],owner:pl.key};
     }
   });
-  return {size,board,players,order:players.map(x=>x.key),alive:players.map(x=>x.key),offline:[],turn:0,winner:null,moves:0};
+  return {layout:'cross',size,depth,cells,board,players,order:players.map(x=>x.key),alive:players.map(x=>x.key),offline:[],turn:0,winner:null,moves:0};
 }
-function ffaPathClear(board,size,fx,fy,tx,ty) {
-  const dx=Math.sign(tx-fx),dy=Math.sign(ty-fy);let x=fx+dx,y=fy+dy;
-  while(x!==tx||y!==ty){if(board[y*size+x])return false;x+=dx;y+=dy;}
+function ffaPathClear(f,fx,fy,tx,ty) {
+  const {board,size:n,cells}=f,dx=Math.sign(tx-fx),dy=Math.sign(ty-fy);let x=fx+dx,y=fy+dy;
+  while(x!==tx||y!==ty){const at=y*n+x;if((cells&&!cells[at])||board[at])return false;x+=dx;y+=dy;}
   return true;
 }
 function areFFAAllies(f,a,b) {
@@ -491,6 +532,7 @@ function ffaFinishIfDone(p) {
 function ffaLegal(f,key,from,to) {
   const n=f.size,board=f.board;
   if(!Number.isInteger(from)||!Number.isInteger(to)||from<0||to>=n*n||from===to)return false;
+  if(f.cells&&(!f.cells[from]||!f.cells[to]))return false;
   const piece=board[from],target=board[to];if(!piece||piece.owner!==key||target&&(target.owner===key||areFFAAllies(f,key,target.owner)))return false;
   const fx=from%n,fy=Math.floor(from/n),tx=to%n,ty=Math.floor(to/n),dx=tx-fx,dy=ty-fy,ax=Math.abs(dx),ay=Math.abs(dy),t=piece.type;
   if(t==='N')return (ax===1&&ay===2)||(ax===2&&ay===1);
@@ -503,7 +545,7 @@ function ffaLegal(f,key,from,to) {
   }
   const straight=dx===0||dy===0,diag=ax===ay;
   if(t==='R'&&!straight || t==='B'&&!diag || t==='Q'&&!straight&&!diag)return false;
-  return ffaPathClear(board,n,fx,fy,tx,ty);
+  return ffaPathClear(f,fx,fy,tx,ty);
 }
 function ffaNext(f) {
   if(!f.alive.length)return;

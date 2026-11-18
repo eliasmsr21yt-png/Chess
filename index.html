@@ -207,18 +207,25 @@ input{-webkit-user-select:text;user-select:text;font:inherit}
 .party-match .winner{color:#00a152;font-weight:600}
 .party-tag{font-size:11px;padding:3px 7px;border-radius:999px;background:rgba(41,121,255,.14);color:#2979ff}
 .party-hint{font-size:12px;color:var(--text-secondary);line-height:1.45}
-#bd.ffa{width:100%;min-width:0;max-width:none;aspect-ratio:1;grid-auto-rows:1fr;touch-action:pan-y pinch-zoom;border-radius:5px;margin-inline:auto;user-select:none;clip-path:polygon(9% 0,91% 0,100% 9%,100% 91%,91% 100%,9% 100%,0 91%,0 9%)}
-.ffa-board-wrap{width:100%;max-width:660px;margin:0 auto;overflow:auto;overscroll-behavior:contain;border-radius:8px}
+/* FFA-Brett nach dem Vierfarben-Vorbild: helle, abgeschrägte Platte,
+   grünes 10x10-Mittelfeld und vier Figurenränge an den Seiten. */
+#bd.ffa{width:100%;min-width:0;max-width:none;aspect-ratio:1;grid-auto-rows:1fr;gap:1px;background:transparent;touch-action:pan-y pinch-zoom;border-radius:0;margin:0 auto;user-select:none;clip-path:none;overflow:visible}
+.ffa-board-wrap{width:min(100%,460px);max-width:460px;aspect-ratio:1;margin:0 auto;padding:8px;box-sizing:border-box;overflow:hidden;overscroll-behavior:contain;background:#eee8d9;clip-path:polygon(8% 0,92% 0,100% 8%,100% 92%,92% 100%,8% 100%,0 92%,0 8%);}
+.tourney-result-actions{display:grid;grid-template-columns:1fr;gap:9px;width:min(100%,360px);margin-top:18px}
+.tourney-result-actions button{min-height:46px;padding:12px 16px;border:1px solid currentColor;border-radius:12px;background:rgba(0,0,0,.10);color:inherit;font:inherit;font-weight:700;cursor:pointer}
+.tourney-result-actions button:active{transform:scale(.98)}
 .ffa-tools{display:flex;gap:8px;justify-content:center;align-items:center;margin:8px auto;flex-wrap:wrap}.ffa-tools button{min-width:42px;min-height:40px}
 .party-intermission{border:1px solid rgba(41,121,255,.35);background:rgba(41,121,255,.08);border-radius:14px;padding:12px;margin:12px 0;text-align:center}
 .party-result-time{font-size:11px;color:var(--text-secondary);margin-top:5px;line-height:1.4}
 .party-watch-btn{min-height:38px;white-space:nowrap}.party-lower{border-color:rgba(255,145,0,.35)}
 .party-match button{margin-top:7px}
-@media(max-width:520px){.party-round{flex-basis:160px;min-width:160px}.party-match{padding:8px;font-size:12px}.party-rounds{gap:8px}.ffa-board-wrap{max-width:min(100vw - 28px,560px)}}
-.fq{position:relative;display:grid;place-items:center;aspect-ratio:1;min-width:0;min-height:0;cursor:pointer;user-select:none}
-.fq.light{background:#ead9bd}.fq.dark{background:#956e50}
+@media(max-width:520px){.party-round{flex-basis:160px;min-width:160px}.party-match{padding:8px;font-size:12px}.party-rounds{gap:8px}.ffa-board-wrap{width:min(100%,calc(100vw - 20px));max-width:calc(100vw - 20px);padding:5px}}
+.fq{position:relative;display:grid;place-items:center;aspect-ratio:1;min-width:0;min-height:0;cursor:pointer;user-select:none;box-sizing:border-box}
+.fq.light{background:#f3f1e6}.fq.dark{background:#205a45}
+.fq.pad{background:#eee8d9;border:1px solid rgba(105,90,60,.10)}
+.fq.offboard{visibility:hidden;pointer-events:none}
 .fq.selected{outline:3px solid #ffca28;outline-offset:-3px;z-index:2}
-.fq .fp{font-family:"Segoe UI Symbol","Apple Symbols","Noto Sans Symbols 2",sans-serif;font-size:clamp(10px,2.7vw,27px);line-height:1;pointer-events:none;text-shadow:0 1px 2px rgba(0,0,0,.45)}
+.fq .fp{font-family:"Segoe UI Symbol","Apple Symbols","Noto Sans Symbols 2",sans-serif;font-size:var(--ffa-piece-size,clamp(10px,2.7vw,27px));line-height:1;pointer-events:none;text-shadow:0 1px 2px rgba(0,0,0,.45)}
 .ffa-meta{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}.ffa-order{font-size:12px;line-height:1.5;color:var(--text-secondary);overflow-wrap:anywhere}.ffa-order .active{font-weight:700;color:var(--text-primary)}.ffa-order .out{text-decoration:line-through;opacity:.45}
 .ffa-chip{display:flex;align-items:center;gap:5px;border:1px solid var(--border);background:rgba(127,127,127,.1);padding:5px 8px;border-radius:12px;font-size:12px}
 .ffa-chip.out{opacity:.4;text-decoration:line-through}
@@ -273,7 +280,7 @@ let netClock=null,serverOffset=0,hasServerOffset=false,bestClockRtt=Infinity;
 let mo=true,started=false,mm='',scr='home',mode='bot',lvl=2,bl=2,opp={n:'Bot Stufe 3',e:1200},elo=300,e0=300,ed=0,rd=false,rq=0,fnd=0,t1=0,t2=0,ls='w',lret='home';
 let socket=null,onlineSide='w',roomCode='',partyCode='',onlineReady=false,onlineStatus='',lastNetMove=null;
 let rated=false,BL=null,oppLk=null,pc='',sbot=0,ip=null;
-let partyState=null,partyRenderSig='',partyDraftPairs=[],ffaState=null,ffaSel=-1,ffaScale=1,onlineCanMove=true,onlineSpectator=false,teamTurnMessage='',onlineTeamGame=false;
+let partyState=null,partyRenderSig='',partyDraftPairs=[],ffaState=null,ffaSel=-1,ffaScale=1,onlineCanMove=true,onlineSpectator=false,teamTurnMessage='',onlineTeamGame=false,tournamentResultPending=false,deferredTournamentGameStart=null;
 const PARTY_MODES=[['normal','♟','Normal','Mehrere unabhängige klassische Partien.'],['tournament','🏆','Turnier','Zufällige Auslosung mit K.-o.-Baum.'],['ffa','⚔️','Alle gegen Alle','Großes gemeinsames Brett, jeder gegen jeden.'],['team','👥','Team','Mehrere Spieler teilen sich eine Schachfarbe.']];
 let ef={w:'',b:''},P=null,AU=null,SHOP={},note='',authMsg='',pnm='',sent=0,dg=null,dm=0,dd=0,lastBuy='',anm='',apw='',pax=null,atm=0,rst=0,LB=null,lbq=0,PS=null,otc=5,gtc=5,FR=[],FRN=[],frq=0,frn='',ivs=[],pmOn=false,pm=[],nn='',sentB=0,glv=0;
 const SK={fire:{n:'Feuer',c:'#ff6d00',e:'🔥'},bolt:{n:'Blitz',c:'#ffee58',e:'⚡'},ice:{n:'Eis',c:'#80d8ff',e:'❄'},gold:{n:'Gold',c:'#ffc400',e:'★'},neon:{n:'Neon',c:'#69f0ae',e:'✦'},rainbow:{n:'Regenbogen',c:'#ff4081',e:'✺'},ghost:{n:'Geist',c:'#cfe8ff',e:'👻'},toxic:{n:'Gift',c:'#76ff03',e:'☣'},sakura:{n:'Sakura',c:'#ff8ab8',e:'🌸'},thunder:{n:'Donner',c:'#b388ff',e:'⛈'},diamond:{n:'Diamant',c:'#e0f7fa',e:'💎'},phoenix:{n:'Phönix',c:'#ff7043',e:'✨',L:1},aurora:{n:'Aurora',c:'#80deea',e:'🌌'},celestial:{n:'Celestial',c:'#fff4b0',e:'✦',L:1}};
@@ -477,8 +484,9 @@ else if(scr=='lobby'){
    config=participantHtml+'<div class="party-panel"><div class="lb">K.-o.-Turnier und Trostrunde</div><div class="party-hint">'+selected.length+' ausgewählte Spieler. Das System verteilt Freilose, setzt Gewinner automatisch weiter und eröffnet für ausgeschiedene Spieler eine parallele Trostrunde.</div>'+(host&&(!tr||tr.finished)&&!preview?'<button class="go" data-a="partyPreview" '+(selected.length<2?'disabled':'')+'>🎲 Turnierbaum auslosen und ansehen</button>':'')+(host&&preview?'<button class="go" data-a="partyStart">Turnier mit diesem Baum starten</button>':'')+bracketHtml+'</div>';
  } else if(ps.mode==='ffa'){
    const groups=ps.ffaTeams||{};
-   const groupOptions=key=>'<option value="solo"'+((groups[key]||'solo')==='solo'?' selected':'')+'>Einzelspieler</option>'+['1','2','3','4'].map(v=>'<option value="'+v+'"'+(groups[key]===v?' selected':'')+'>Gruppe '+v+'</option>').join('');
-   config='<div class="party-panel"><div class="lb">Vierseitiges Mehrspieler-Schach</div><div class="party-hint">Wie auf dem Vorbild: vier Startseiten rund um ein gemeinsames Brett. Das Brett wächst nur bei größeren Gruppen. Für mehr als vier Spieler kannst du Bündnisse festlegen, zum Beispiel zwei Spieler gegen einen. Verbündete können einander nicht schlagen; die Allianz gewinnt gemeinsam.</div>'+(ppl.length>4?'<div class="party-panel"><div class="lb">Allianzen festlegen · nur Party-Leiter</div>'+ppl.map(x=>'<div class="party-row"><span class="ct"><span class="c1">'+esc(x.name)+'</span></span><select class="party-field" style="max-width:150px" data-ffa-player="'+esc(x.key)+'" '+(!host||setupLocked?'disabled':'')+'>'+groupOptions(x.key)+'</select></div>').join('')+(host&&!setupLocked?'<button class="rs" data-a="partyFFASave">Allianzen speichern</button>':'')+'</div>':'<div class="party-hint">Mit bis zu vier Spielern ist jeder für sich allein. Der Leiter kann mit fünf oder mehr Spielern Teams/Gruppen bilden.</div>')+(ps.ffa?'<div class="party-hint" style="margin-top:8px">Aktuelles Brett: '+ps.ffa.size+' × '+ps.ffa.size+' · Züge: '+ps.ffa.moves+'</div>':'')+'</div>';
+   const groupNames={'1':'Team Gelb · oben','2':'Team Grün · rechts','3':'Team Blau · unten','4':'Team Rot · links'};
+   const groupOptions=key=>'<option value="solo"'+((groups[key]||'solo')==='solo'?' selected':'')+'>Einzelspieler</option>'+['1','2','3','4'].map(v=>'<option value="'+v+'"'+(groups[key]===v?' selected':'')+'>'+groupNames[v]+'</option>').join('');
+   config='<div class="party-panel"><div class="lb">Vierseitiges Mehrspieler-Schach</div><div class="party-hint">Das Brett entspricht dem Vierfarben-Brett: grünes Schachfeld in der Mitte und vier Startseiten außen. Gelb oben, Grün rechts, Blau unten und Rot links. Jeder Spieler hat zehn Figuren. Bei mehr als vier Spielern kannst du mehrere Spieler auf dieselbe Seite / Allianz setzen, zum Beispiel 2 gegen 1. Verbündete können einander nicht schlagen und gewinnen gemeinsam.</div>'+(ppl.length>4?'<div class="party-panel"><div class="lb">Seiten und Allianzen festlegen · nur Party-Leiter</div>'+ppl.map(x=>'<div class="party-row"><span class="ct"><span class="c1">'+esc(x.name)+'</span></span><select class="party-field" style="max-width:185px" data-ffa-player="'+esc(x.key)+'" '+(!host||setupLocked?'disabled':'')+'>'+groupOptions(x.key)+'</select></div>').join('')+(host&&!setupLocked?'<button class="rs" data-a="partyFFASave">Seiten speichern</button>':'')+'</div>':'<div class="party-hint">Bis zu vier Spieler starten automatisch auf den vier Seiten. Bei größeren Gruppen kannst du die Seiten oben verteilen.</div>')+(ps.ffa?'<div class="party-hint" style="margin-top:8px">Aktuelles Brett: '+ps.ffa.size+' × '+ps.ffa.size+' · Züge: '+ps.ffa.moves+'</div>':'')+'</div>';
  } else {
    const teams=ps.teams||{w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'},colors:{w:'#f5f5f5',b:'#252a34'}};
    const assignment=ppl.map((x,i)=>teams.w.includes(x.key)?'w':teams.b.includes(x.key)?'b':(i<ppl.length/2?'w':'b'));
@@ -577,21 +585,33 @@ ed=Math.round(32*(sc-1/(1+10**((opp.e-elo)/400))));elo=Math.max(100,elo+ed);
 try{localStorage.setItem('chessElo',elo)}catch(x){}}
 function applyPartyTeamColors(colors){if(!onlineTeamGame||!colors)return;const a=colors.w||'#f5f5f5',b=colors.b||'#252a34';wr.style.setProperty('--cw',a);wr.style.setProperty('--cb',b)}
 function startGame(m){
-mode=m;if(m!=='online'){onlineSpectator=false;onlineCanMove=true;}teamTurnMessage='';$('ptree').style.display=(m==='online'&&partyState&&partyState.mode==='tournament')?'':'none';$('bd').classList.remove('ffa');$('bd').style.width='100%';$('bd').style.minWidth='';$('bd').style.gridTemplateColumns='';$('bd').parentElement.classList.remove('ffa-board-wrap');$('bd').parentElement.style.maxWidth='';$('bd').parentElement.style.margin='';$('bd').parentElement.style.overflowX='';$('un').style.display='';$('fl').style.display='';$('pt').style.display='';$('pb').style.display='';$('pmr').style.display='';vs=m!='friends';if(m=='online')netLook();else BL={th:{...th},col:{...col},ef:{...ef}};sent=0;pm=[];sentB=0;glv=lvl;
+tournamentResultPending=false;deferredTournamentGameStart=null;mode=m;if(m!=='online'){onlineSpectator=false;onlineCanMove=true;}teamTurnMessage='';$('ptree').style.display=(m==='online'&&partyState&&partyState.mode==='tournament')?'':'none';$('bd').classList.remove('ffa');$('bd').style.width='100%';$('bd').style.minWidth='';$('bd').style.gridTemplateColumns='';$('bd').style.gridTemplateRows='';$('bd').parentElement.classList.remove('ffa-board-wrap');$('bd').parentElement.style.maxWidth='';$('bd').parentElement.style.margin='';$('bd').parentElement.style.overflowX='';$('un').style.display='';$('fl').style.display='';$('pt').style.display='';$('pb').style.display='';$('pmr').style.display='';vs=m!='friends';if(m=='online')netLook();else BL={th:{...th},col:{...col},ef:{...ef}};sent=0;pm=[];sentB=0;glv=lvl;
 if(m=='bot')opp={n:'Bot Stufe '+(lvl+1),e:LV[lvl].e};
 bl=m=='online'?lvOf(opp.e):lvl;
 S=init();H=[];sel=-1;tg=[];pend=null;busy=false;to=null;netClock=null;rd=false;rq=0;flip=m=='online'&&onlineSide=='b';tc=m=='online'?gtc:ntc;ck={w:tc*6e4,b:tc*6e4};ar=[];pf=-1;pen=null;rv();lt=Date.now();
 mo=false;started=true;show();intro()}
 
 function startFFA(d){
- ffaState=d;ffaSel=-1;ffaScale=1;mode='ffa';vs=false;started=true;mo=false;tc=0;to=null;I={};H=[];sel=-1;tg=[];pm=[];ar=[];rv();$('bd').classList.add('ffa');$('bd').parentElement.classList.add('ffa-board-wrap');$('bd').parentElement.style.maxWidth='660px';$('bd').parentElement.style.overflowX='auto';show();drawFFA();
+ ffaState=d;ffaSel=-1;ffaScale=1;mode='ffa';vs=false;started=true;mo=false;tc=0;to=null;I={};H=[];sel=-1;tg=[];pm=[];ar=[];rv();
+ $('bd').classList.add('ffa');$('bd').parentElement.classList.add('ffa-board-wrap');
+ $('bd').parentElement.style.maxWidth='460px';$('bd').parentElement.style.width='100%';$('bd').parentElement.style.margin='0 auto';$('bd').parentElement.style.overflow='hidden';
+ show();drawFFA();
 }
 function drawFFA(){
  if(!ffaState)return;
  const f=ffaState,n=f.size,colors=Object.fromEntries((f.players||[]).map(x=>[x.key,x.color]));
  const glyph={K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟'};
- $('bd').className='ffa';$('bd').style.gridTemplateColumns='repeat('+n+',minmax(0,1fr))';$('bd').style.width=(ffaScale*100)+'%';$('bd').style.minWidth='0';$('bd').parentElement.classList.add('ffa-board-wrap');$('bd').parentElement.style.maxWidth='660px';$('bd').parentElement.style.overflowX=ffaScale>1?'auto':'hidden';
- $('bd').innerHTML=(f.board||[]).map((p,i)=>'<div class="fq '+(((Math.floor(i/n)+(i%n))&1)?'dark':'light')+(ffaSel===i?' selected':'')+'" data-fi="'+i+'">'+(p?'<span class="fp" style="color:'+colors[p.owner]+'">'+(glyph[p.type]||'')+'</span>':'')+'</div>').join('');
+ const depth=Number.isFinite(f.depth)?f.depth:Math.max(2,Math.floor((n-10)/2));
+ $('bd').className='ffa';$('bd').style.gridTemplateColumns='repeat('+n+',minmax(0,1fr))';$('bd').style.gridTemplateRows='repeat('+n+',minmax(0,1fr))';$('bd').style.width=(ffaScale*100)+'%';$('bd').style.minWidth='0';
+ $('bd').parentElement.classList.add('ffa-board-wrap');$('bd').parentElement.style.maxWidth='460px';$('bd').parentElement.style.width='100%';$('bd').parentElement.style.margin='0 auto';$('bd').parentElement.style.overflow=ffaScale>1?'auto':'hidden';
+ const ffaCell=(($('bd').parentElement.clientWidth||460)-16)*ffaScale/n;$('bd').style.setProperty('--ffa-piece-size',Math.max(8,Math.min(23,ffaCell*.72))+'px');
+ $('bd').innerHTML=(f.board||[]).map((p,i)=>{
+   const x=i%n,y=Math.floor(i/n),playable=!f.cells||!!f.cells[i];
+   if(!playable)return '<div class="fq offboard" aria-hidden="true"></div>';
+   const center=!f.cells||(x>=depth&&x<depth+10&&y>=depth&&y<depth+10);
+   const shade=center?(((x-depth+y-depth)&1)?'dark':'light'):'pad';
+   return '<div class="fq '+shade+(ffaSel===i?' selected':'')+'" data-fi="'+i+'" aria-label="Feld '+(x+1)+', '+(y+1)+'">'+(p?'<span class="fp" style="color:'+colors[p.owner]+'">'+(glyph[p.type]||'')+'</span>':'')+'</div>';
+ }).join('');
  const current=(f.players||[]).find(x=>x.key===f.turnKey),alive=(f.players||[]).filter(x=>f.alive.includes(x.key)),out=(f.players||[]).filter(x=>!f.alive.includes(x.key));
  const order=(f.order||[]).map(k=>{const pl=(f.players||[]).find(x=>x.key===k);return pl?'<span class="'+(k===f.turnKey?'active':'')+' '+(!f.alive.includes(k)?'out':'')+'">'+esc(pl.name)+(pl.connected===false?' · offline':'')+'</span>':''}).filter(Boolean).join(' → ');
  $('st').className=f.winner?'fin':'';
@@ -621,12 +641,12 @@ if(socket?.connected)return socket;
 if(!socket){socket=io(window.CHESS_SERVER_URL||location.origin);socket.on('connect',()=>{onlineStatus='';try{const lc=JSON.parse(localStorage.getItem('chessLB')||'null');if(lc&&lc.length)socket.emit('lb:seed',{rows:lc})}catch(x){}if(AU)socket.emit('auth:token',{name:AU.name,token:AU.token});else sendAuth()});socket.on('connect_error',()=>{onlineStatus='Server nicht erreichbar. Bitte später erneut versuchen.';if(scr=='search'){clearTimeout(t1);scr='online'}if(scr=='auth'){if(pax)amsg('Server wacht gerade auf … das kann bis zu 1 Minute dauern. Deine Eingaben bleiben erhalten.')}else rn()});
 socket.on('room:created',d=>{partyCode=d.code;roomCode='';try{localStorage.setItem('chessParty',partyCode)}catch(x){}onlineReady=false;partyState=null;scr='lobby';menu()});
 socket.on('room:joined',d=>{partyCode=d.code;try{localStorage.setItem('chessParty',partyCode)}catch(x){}onlineReady=true;scr='lobby';menu()});
-socket.on('party:state',d=>{const prevPhase=partyState&&partyState.tournament&&partyState.tournament.phase;const currentLower=mode==='online'&&started&&d.games&&d.games.some(g=>g.code===roomCode&&g.bracket==='lower'&&g.status==='running');const signature=partyStateSignature(d),stateChanged=signature!==partyRenderSig;partyRenderSig=signature;partyState=d;if(d&&d.code){partyCode=d.code;try{localStorage.setItem('chessParty',partyCode)}catch(x){}}if(onlineTeamGame)applyPartyTeamColors(d.teams&&d.teams.colors);$('ptree').style.display=(mode==='online'&&d.mode==='tournament'&&started)?'':'none';if(d.tournament&&d.tournament.phase==='intermission'&&prevPhase!=='intermission'&&!currentLower){started=false;onlineCanMove=false;mo=true;scr='lobby';show();}else if(stateChanged&&mo&&['lobby','party'].includes(scr)){scr='lobby';const y=window.scrollY;menu();window.scrollTo(0,y)}});
-socket.on('game:start',d=>{clearTimeout(t1);roomCode=d.code;onlineSide=d.side==='b'?'b':'w';rated=d.kind=='match';onlineTeamGame=!!d.team;gtc=d.tc||0;onlineCanMove=d.canMove!==false;onlineSpectator=!!d.spectator;teamTurnMessage='';opp={n:(d.opp&&d.opp.n)||(rated?'Gegner':'Mitspieler'),e:+(d.opp&&d.opp.e)||elo,a:(d.opp&&d.opp.a)|0};oppLk=null;startGame('online');if(onlineTeamGame)applyPartyTeamColors(d.teamColors);else{wr.style.setProperty('--cw','#fff');wr.style.setProperty('--cb','#1a1a1a')}setOnlineClock(d.clock);pingClock();rt();if(!onlineSpectator)socket.emit('game:look',myLk())});
+socket.on('party:state',d=>{const prevPhase=partyState&&partyState.tournament&&partyState.tournament.phase;const currentLower=mode==='online'&&started&&d.games&&d.games.some(g=>g.code===roomCode&&g.bracket==='lower'&&g.status==='running');const signature=partyStateSignature(d),stateChanged=signature!==partyRenderSig;partyRenderSig=signature;partyState=d;if(d&&d.code){partyCode=d.code;try{localStorage.setItem('chessParty',partyCode)}catch(x){}}if(onlineTeamGame)applyPartyTeamColors(d.teams&&d.teams.colors);$('ptree').style.display=(mode==='online'&&d.mode==='tournament'&&started)?'':'none';if(d.tournament&&d.tournament.phase==='intermission'&&prevPhase!=='intermission'&&!currentLower&&!tournamentResultPending){started=false;onlineCanMove=false;mo=true;scr='lobby';show();}else if(stateChanged&&mo&&['lobby','party'].includes(scr)){scr='lobby';const y=window.scrollY;menu();window.scrollTo(0,y)}});
+socket.on('game:start',d=>{if(tournamentResultPending&&d&&d.partyGame&&roomCode&&d.code!==roomCode){deferredTournamentGameStart=d;return;}clearTimeout(t1);roomCode=d.code;onlineSide=d.side==='b'?'b':'w';rated=d.kind=='match';onlineTeamGame=!!d.team;gtc=d.tc||0;onlineCanMove=d.canMove!==false;onlineSpectator=!!d.spectator;teamTurnMessage='';opp={n:(d.opp&&d.opp.n)||(rated?'Gegner':'Mitspieler'),e:+(d.opp&&d.opp.e)||elo,a:(d.opp&&d.opp.a)|0};oppLk=null;startGame('online');if(onlineTeamGame)applyPartyTeamColors(d.teamColors);else{wr.style.setProperty('--cw','#fff');wr.style.setProperty('--cb','#1a1a1a')}setOnlineClock(d.clock);pingClock();rt();if(!onlineSpectator)socket.emit('game:look',myLk())});
 socket.on('game:move',d=>{if(mode!='online'||!started)return;setOnlineClock(d.clock);if(d.by===socket.id)return;const m=legal(S).find(x=>x.f===d.from&&x.t===d.to&&((x.pr||'')===(d.promotion||'')));if(m){go(m);}});
 socket.on('game:sync',d=>{if(mode!=='online'||!started||!d||!Array.isArray(d.board))return;let replay=init(),history=[];for(const h of d.history||[]){const m=legal(replay).find(x=>x.f===h.from&&x.t===h.to&&(!x.pr||(x.pr===(h.promotion||'q'))));if(!m)break;history.push(replay);replay=mk(replay,m)}S={b:d.board.slice(),t:d.turn==='b'?'b':'w',cs:d.castling||'KQkq',ep:Number.isInteger(d.ep)?d.ep:-1,hm:d.halfmove||0,mv:null};H=history;sel=-1;tg=[];pend=null;setOnlineClock(d.clock);draw()});
 socket.on('game:turn',d=>{if(mode!=='online'||!started)return;const key=(AU&&AU.name||'').toLowerCase();onlineCanMove=!onlineSpectator&&d.canMoveKeys&&d.canMoveKeys[onlineSide]===key;if(d.colors)applyPartyTeamColors(d.colors);teamTurnMessage=(d.active&&d.active[S.t]?(d.names&&d.names[S.t]||('Team '+(S.t==='w'?'Weiß':'Schwarz')))+': '+d.active[S.t]+' ist am Zug.':'');draw()});
-socket.on('game:finished',d=>{if(mode!=='online'||!started)return;if(!to){to={end:d.reason||'Partie beendet',win:d.winner||null};draw();}onlineCanMove=false;if(partyState&&partyState.mode==='tournament'&&d.bracket){started=false;mo=true;scr='lobby';show();toast('Match beendet · Turnierbaum und weitere Spiele verfügbar.');}});
+socket.on('game:finished',d=>{if(mode!=='online'||!started)return;if(partyState&&partyState.mode==='tournament'&&d.bracket){tournamentResultPending=true;deferredTournamentGameStart=null;clearTimeout(ot);}if(!to){to={end:d.reason||'Partie beendet',win:d.winner||null};draw();}onlineCanMove=false;if(tournamentResultPending){clearTimeout(ot);showWin();}});
 socket.on('game:verified-end',d=>{if(mode!=='online'||!started||to)return;to={end:d.reason||'Partie beendet',win:d.winner||null};draw()});
 socket.on('ffa:start',d=>startFFA(d));
 socket.on('ffa:state',d=>{if(!d)return;ffaState=d;if(mode==='ffa')drawFFA();else if(mo&&scr==='lobby')menu()});
@@ -662,15 +682,16 @@ function joinRoom(){const code=($('partyCode')?.value||'').replace(/\D/g,'');if(
 function find(){const s=ensureSocket();if(!s){scr='online';menu();return}fnd=0;sbot=0;onlineStatus='';scr='search';menu();s.emit('match:join',{elo,tc:otc});clearTimeout(t1);t1=setTimeout(()=>{if(scr=='search'){sbot=1;menu()}},15000)}
 function showWin(){
 if(mo||!I.end)return;
-const w=I.win,lose=vs&&w&&w!=(mode=='online'?onlineSide:'w'),bg=w?(lose?'#ff1744':'#ffd600'):'#2979ff',fg=w&&!lose?'#1a1a1a':'#fff';
+const w=I.win,resultForPlayer=vs&&w&&!onlineSpectator,lose=resultForPlayer&&w&&w!=(mode=='online'?onlineSide:'w'),bg=w?(lose?'#ff1744':'#ffd600'):'#2979ff',fg=w&&!lose?'#1a1a1a':'#fff';
+const tournamentActions=tournamentResultPending&&mode==='online'?'<div class="tourney-result-actions"><button type="button" data-result-action="bracket">🏆 Turnierbaum ansehen</button><button type="button" data-result-action="watch">👀 Zuschauen</button><button type="button" data-result-action="bot">♟ Gegen Bot trainieren</button></div>':'';
 gv.innerHTML='<div class="ov" style="background:'+bg+';color:'+fg+'">'+(w?'<span class="p '+w+efc(w)+'" style="font-size:min(36vw,150px)">'+G.k+'\uFE0E</span>':'')+'<div class="wt">'+(w?nS(w)+' gewinnt!':I.end)+'</div><div class="ws">'+(w?(I.mate?'durch Schachmatt':I.end):I.sub)+'</div>'
-+(vs&&w?'<div class="ws" style="font-weight:500">'+(lose?'Du hast verloren':'Du hast gewonnen')+'</div>':'')
-+(mode=='online'&&rd?'<div class="we">Elo '+e0+' → '+elo+' ('+(ed<0?'−':'+')+Math.abs(ed)+')</div>':'')+'</div>';
++(resultForPlayer?'<div class="ws" style="font-weight:700;font-size:20px">'+(lose?'Du hast verloren':'Du hast gewonnen')+'</div>':'')
++(mode=='online'&&rd?'<div class="we">Elo '+e0+' → '+elo+' ('+(ed<0?'−':'+')+Math.abs(ed)+')</div>':'')+tournamentActions+'</div>';
 const o=gv.firstChild,k=o.querySelector('.p');
 o.animate([{opacity:0},{opacity:1}],{duration:250});
 k?.animate([{transform:'scale(.2) rotate(-25deg)',opacity:0},{transform:'scale(1.15) rotate(6deg)',opacity:1,offset:.7},{transform:'none'}],{duration:700,easing:'ease-out'});
 o.querySelector('.wt').animate([{transform:'translateY(20px)',opacity:0},{transform:'none',opacity:1}],{duration:450,delay:250,fill:'backwards'});
-ot=setTimeout(()=>{o.animate([{opacity:1},{opacity:0}],{duration:450,fill:'forwards'}).onfinish=()=>{if(gv.firstChild===o)gv.innerHTML=''}},mode=='online'?4300:3300)}
+if(!tournamentResultPending)ot=setTimeout(()=>{o.animate([{opacity:1},{opacity:0}],{duration:450,fill:'forwards'}).onfinish=()=>{if(gv.firstChild===o)gv.innerHTML=''}},mode=='online'?4300:3300)}
 function rt(){
 const f=ms=>{const s=Math.ceil(ms/1000);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
 const nl=s=>{if(!vs)return nS(s);if(mode=='online')return s==onlineSide?(P?av(P.av)+esc(P.name):'Du')+' · '+elo:av(opp.a)+esc(opp.n)+' · '+opp.e;return s=='w'?(P?av(P.av)+esc(P.name):'Du'):opp.n+' · '+opp.e};
@@ -750,7 +771,7 @@ const t=e.type=='pointerup'?sqAt(e.clientX,e.clientY):-1,ms=tg.filter(m=>m.t==t)
 if(ms.length){if(d.pre)addPre(ms.find(x=>x.pr=='q')||ms[0]);else if(ms[0].pr){pend=ms;draw()}else{dd=1;play(ms[0])}}else draw()};
 bd.addEventListener('pointerup',dEnd);bd.addEventListener('pointercancel',dEnd);
 $('mb').onclick=()=>{mo=true;scr='home';mm='';show()};
-gv.onclick=()=>{clearTimeout(ot);gv.innerHTML=''};
+gv.onclick=e=>{const action=e.target.closest('[data-result-action]')?.dataset.resultAction;if(action){if(action==='bot'){window.open(location.pathname+'?partyBot=1','_blank','noopener');return;}if(action==='bracket'||action==='watch'){clearTimeout(ot);gv.innerHTML='';tournamentResultPending=false;deferredTournamentGameStart=null;started=false;onlineCanMove=false;onlineSpectator=false;mo=true;scr='lobby';show();if(action==='watch')setTimeout(()=>{const target=document.querySelector('.party-watch-btn')||document.querySelector('.party-rounds');target?.scrollIntoView({behavior:'smooth',block:'center'});},80);return;}}if(tournamentResultPending)return;clearTimeout(ot);gv.innerHTML=''};
 bd.onclick=e=>{
 if(mode==='ffa'){const q=e.target.closest('.fq');if(q)ffaClick(+q.dataset.fi);return}
 if(dm)return;const q=e.target.closest('.q');if(!q)return;
@@ -810,7 +831,7 @@ if(a=='fdel'){if(socket?.connected)socket.emit('friend:del',{name:d.n});return}
 if(a=='install'&&ip){ip.prompt();ip=null;menu()}
 if(a=='back'){mo=false;show();ai()}};
 $('ptree').onclick=()=>{if(partyState&&partyState.mode==='tournament'){mo=true;scr='lobby';show();}};
-$('st').onclick=e=>{const z=e.target.closest('[data-ffa-zoom]');if(!z||mode!=='ffa')return;const v=z.dataset.ffaZoom;ffaScale=v==='in'?Math.min(2.4,+(ffaScale+.2).toFixed(2)):v==='out'?Math.max(1,+(ffaScale-.2).toFixed(2)):1;drawFFA();};
+$('st').onclick=e=>{const z=e.target.closest('[data-ffa-zoom]');if(!z||mode!=='ffa')return;const v=z.dataset.ffaZoom;ffaScale=v==='in'?Math.min(1.4,+(ffaScale+.15).toFixed(2)):v==='out'?Math.max(1,+(ffaScale-.15).toFixed(2)):1;drawFFA();};
 setInterval(()=>{const el=$('tournamentCountdown'),tr=partyState&&partyState.tournament;if(el&&tr&&tr.nextRoundAt)el.textContent='Nächste Runde startet in '+Math.max(0,Math.ceil((tr.nextRoundAt-Date.now())/1000))+' Sekunden';},250);
 $('un').onclick=()=>{pm=[];
 if(mode=='online'){
