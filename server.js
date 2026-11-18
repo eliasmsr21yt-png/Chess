@@ -41,13 +41,33 @@ const UT = clean(process.env.UPSTASH_REDIS_REST_TOKEN);
 if (UP && !/^https?:\/\//i.test(UP)) UP = 'https://' + UP;
 const USE_UP = !!(UP && UT);
 const SHOP = { fire: 300, bolt: 400, ice: 250, gold: 350, neon: 300, rainbow: 600, lava: 200, storm: 300, night: 100,
-  ghost: 200, toxic: 350, sakura: 500, thunder: 900, diamond: 1500, phoenix: 5000, ocean: 250, forest: 250, rose: 300, galaxy: 1500 };
+  ghost: 200, toxic: 350, sakura: 500, thunder: 900, diamond: 1500, phoenix: 5000, ocean: 250, forest: 250, rose: 300, galaxy: 1500, aurora: 2500, celestial: 12000 };
 const THI = { 5: 'lava', 6: 'storm', 7: 'night', 8: 'ocean', 9: 'forest', 10: 'rose', 11: 'galaxy' };   // Brett-Index -> Shop-Artikel
 const COMP = { win: 'loss', loss: 'win', draw: 'draw' };
 const KEY = 'chess:users';
-// Unterschrift (HMAC): der Server erkennt echte, unveränderte Profile und Bestenlisten-Einträge auch nach einem Neustart.
-// Schlüssel: SESSION_SECRET oder bei Render automatisch die Service-ID (bleibt bei Neustarts gleich).
-const KSEC = clean(process.env.SESSION_SECRET) || clean(process.env.RENDER_SERVICE_ID);
+// Stabiler HMAC-Schlüssel: wichtig, damit gespeicherte Bestenlisten-Einträge
+// nach einem Server-Neustart weiterhin geprüft und wiederhergestellt werden können.
+// Reihenfolge: eigener Schlüssel, Render-Service-ID, Upstash-Token oder lokale Schlüsseldatei.
+function loadSigningSecret() {
+  const configured = clean(process.env.SESSION_SECRET) || clean(process.env.RENDER_SERVICE_ID);
+  if (configured) return configured;
+  if (USE_UP) return crypto.createHash('sha256').update(UT).digest('hex');
+  try {
+    fs.mkdirSync(DIR, { recursive: true });
+    const keyFile = path.join(DIR, 'session.secret');
+    if (fs.existsSync(keyFile)) {
+      const existing = clean(fs.readFileSync(keyFile, 'utf8'));
+      if (existing.length >= 32) return existing;
+    }
+    const fresh = crypto.randomBytes(48).toString('hex');
+    fs.writeFileSync(keyFile, fresh, { mode: 0o600 });
+    return fresh;
+  } catch (e) {
+    console.error('Kein dauerhafter Signaturschlüssel verfügbar. Bitte SESSION_SECRET setzen:', e.message);
+    return '';
+  }
+}
+const KSEC = loadSigningSecret();
 const sig = (...a) => KSEC ? crypto.createHmac('sha256', KSEC).update(a.join('|')).digest('hex').slice(0, 32) : '';
 const pSig = u => sig('p', u.name, u.coins | 0, u.elo | 0, [...(u.owned || [])].sort().join(','), [...(u.bots || [])].sort().join(','));
 const lSig = (n, e, a) => sig('l', n, e | 0, a | 0);
@@ -123,6 +143,56 @@ const av = x => (x.data.user && x.data.user.av) | 0;
 const pn = o => ({ w: Number(o && o.w) | 0, b: Number(o && o.b) | 0 }), ps = o => ({ w: String((o && o.w) || '').slice(0, 12), b: String((o && o.b) || '').slice(0, 12) });
 const cleanPresets = a => (Array.isArray(a) ? a : []).slice(0, 8).map(p => ({ n: String((p && p.n) || 'Preset').slice(0, 14), th: pn(p && p.th), col: ps(p && p.col), ef: ps(p && p.ef) }));
 
+// Online-Schachuhren werden ausschließlich auf dem Server berechnet.
+const otherSide = side => side === 'w' ? 'b' : 'w';
+function clockView(r, now = Date.now()) {
+  const c = r.clock;
+  if (!c) return null;
+  const remaining = { ...c.remaining };
+  if (!c.ended) remaining[c.turn] = Math.max(0, remaining[c.turn] - Math.max(0, now - c.lastAt));
+  return { remaining, turn: c.turn, serverNow: now };
+}
+function finishTimeout(r, now = Date.now()) {
+  const c = r.clock;
+  if (!c || c.ended) return;
+  const loser = c.turn, winner = otherSide(loser);
+  c.remaining[loser] = 0;
+  c.lastAt = now;
+  c.ended = true;
+  clearTimeout(c.timer);
+  c.timer = null;
+
+  // Erst das Spielergebnis senden: Die Oberfläche kann Elo aktualisieren,
+  // danach überschreibt profile:update es mit dem verbindlichen Serverwert.
+  io.to(r.code).emit('game:timeout', { win: winner, clock: clockView(r, now) });
+  if (r.kind === 'match' && (r.moves || 0) >= 8 && !r.done) {
+    r.res[r.w] = winner === 'w' ? 'win' : 'loss';
+    r.res[r.b] = winner === 'b' ? 'win' : 'loss';
+    settle(r);
+  }
+}
+function checkClock(r, now = Date.now()) {
+  const c = r.clock;
+  if (!c || c.ended) return true;
+  const elapsed = Math.max(0, now - c.lastAt);
+  c.remaining[c.turn] = Math.max(0, c.remaining[c.turn] - elapsed);
+  c.lastAt = now;
+  if (c.remaining[c.turn] <= 0) {
+    finishTimeout(r, now);
+    return true;
+  }
+  return false;
+}
+function scheduleClock(r) {
+  const c = r.clock;
+  if (!c || c.ended) return;
+  clearTimeout(c.timer);
+  const delay = Math.max(0, c.remaining[c.turn] - Math.max(0, Date.now() - c.lastAt));
+  c.timer = setTimeout(() => {
+    if (!checkClock(r)) scheduleClock(r);
+  }, delay + 5);
+}
+
 // Spieler aus Warteschlange und Raum entfernen, Gegner informieren
 function leave(s) {
   queue = queue.filter(q => q.id !== s.id);
@@ -131,6 +201,7 @@ function leave(s) {
   s.data.room = null; s.leave(code);
   const r = rooms.get(code);
   if (!r) return;
+  if (r.clock) { r.clock.ended = true; clearTimeout(r.clock.timer); r.clock.timer = null; }
   if (r.kind === 'match' && (r.moves || 0) >= 8 && !r.done) {   // wer geht, verliert
     const oid = s.id === r.w ? r.b : r.w;
     if (!r.res[s.id]) r.res[s.id] = r.res[oid] ? COMP[r.res[oid]] : 'loss';
@@ -147,8 +218,12 @@ function leave(s) {
 function start(r) {
   const a = sock(r.w), b = sock(r.b);
   if (!a || !b) return;
-  a.emit('game:start', { code: r.code, side: 'w', kind: r.kind, tc: r.tc || 5, opp: { e: b.data.elo, n: nm(b), a: av(b) } });
-  b.emit('game:start', { code: r.code, side: 'b', kind: r.kind, tc: r.tc || 5, opp: { e: a.data.elo, n: nm(a), a: av(a) } });
+  const now = Date.now(), ms = (r.tc || 5) * 60000;
+  r.clock = { remaining: { w: ms, b: ms }, turn: 'w', lastAt: now, ended: false, timer: null };
+  scheduleClock(r);
+  const clock = clockView(r, now);
+  a.emit('game:start', { code: r.code, side: 'w', kind: r.kind, tc: r.tc || 5, clock, opp: { e: b.data.elo, n: nm(b), a: av(b) } });
+  b.emit('game:start', { code: r.code, side: 'b', kind: r.kind, tc: r.tc || 5, clock, opp: { e: a.data.elo, n: nm(a), a: av(a) } });
 }
 
 // Wertung: Elo und Münzen nur, wenn beide Spieler dasselbe Ergebnis melden (oder einer das Spiel verlässt)
@@ -202,6 +277,7 @@ io.on('connection', s => {
   s.emit('server:info', { persist: persistOK() });
   const U = () => s.data.user, room = () => rooms.get(s.data.room);
   const need = () => { if (U()) return true; s.emit('room:error', { message: 'Bitte zuerst anmelden.' }); return false; };
+  s.on('clock:ping', d => s.emit('clock:pong', { clientTime: Number(d && d.clientTime) || 0, serverNow: Date.now() }));
 
   const ok = u => {
     if (u.v !== 3) { if (!(u.v >= 2)) u.elo = 300; u.v = 3; u.coins = 0; u.bots = u.bots || []; u.fr = u.fr || []; u.av = u.av | 0; saveUsers(); }   // Gold startet bei 0
@@ -345,18 +421,35 @@ io.on('connection', s => {
     const r = room();
     if (!r || !d || !Number.isInteger(d.from) || !Number.isInteger(d.to)) return;
     if (d.from < 0 || d.from > 63 || d.to < 0 || d.to > 63) return;
+    const side = s.id === r.w ? 'w' : s.id === r.b ? 'b' : null;
+    if (!side || !r.clock || r.clock.ended || side !== r.clock.turn) return;
+    const now = Date.now();
+    if (checkClock(r, now)) return; // Ein verspäteter Zug kann die Zeitüberschreitung nicht rückgängig machen.
     const promotion = ['q', 'r', 'b', 'n'].includes(d.promotion) ? d.promotion : '';
     r.moves = (r.moves || 0) + 1;
-    s.to(r.code).emit('game:move', { from: d.from, to: d.to, promotion, by: s.id });
+    r.clock.turn = otherSide(side);
+    r.clock.lastAt = now;
+    scheduleClock(r);
+    io.to(r.code).emit('game:move', { from: d.from, to: d.to, promotion, by: s.id, clock: clockView(r, now) });
   });
-  s.on('game:resign', () => { const r = room(); if (r) s.to(r.code).emit('game:resign'); });
+  s.on('game:resign', () => {
+    const r = room();
+    if (!r || !r.clock || r.clock.ended) return;
+    r.clock.ended = true; clearTimeout(r.clock.timer); r.clock.timer = null;
+    s.to(r.code).emit('game:resign');
+  });
   s.on('game:look', d => {
     const r = room(), u = U();
     if (!r || !d || !u) return;
     const x = String(d.x || '');
     s.to(r.code).emit('game:look', { t: Number(d.t) | 0, c: String(d.c || '').slice(0, 9), x: SHOP[x] && u.owned.includes(x) ? x : '' });
   });
-  s.on('game:over', d => { const r = room(); if (r) claim(r, s, d && d.res); });
+  s.on('game:over', d => {
+    const r = room();
+    if (!r) return;
+    if (r.clock && !r.clock.ended) { r.clock.ended = true; clearTimeout(r.clock.timer); r.clock.timer = null; }
+    claim(r, s, d && d.res);
+  });
 
   // ---- Freunde und Herausforderungen ----
   const sendList = () => { const u = U(); if (u) s.emit('friend:list', { list: friendRows(u), keys: u.fr }); };
