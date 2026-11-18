@@ -65,3 +65,42 @@ Start 200 Münzen, täglich +50 beim Anmelden, Online-Spiele bringen 10 bis 30 (
 - Bot-Spiele und lokale Spiele behalten ihre bisherige lokale Zeituhr.
 - Nach dem Hochladen des Updates auf GitHub in Render einen neuen Deploy starten. Bei bereits geöffneten Spielseiten einmal vollständig neu laden.
 - Der App-Cache wurde auf `schach-v4` erhöht, damit installierte Versionen das Update neu laden.
+
+
+## Update 13 – Vier Party-Spielmodi
+
+Private Partys unterstützen jetzt bis zu 16 Spieler. Der Party-Leiter wählt in der Lobby den Spielmodus und die Bedenkzeit (1, 3, 5, 10, 15 oder 30 Minuten bzw. eine eigene Zeit von 1 bis 30 Minuten). Alle Spieler sehen die Auswahl und den Party-Code.
+
+### Normal
+- Der Leiter kann Spieler paaren oder die Standard-Paarung verwenden.
+- Jedes Paar erhält eine eigene, unabhängig gespeicherte Schachpartie mit eigener Uhr.
+- Nicht spielende Party-Mitglieder können laufende Partien beobachten oder über „Separates Bot-Training in neuem Tab“ unabhängig trainieren.
+
+### Turnier
+- Der Leiter wählt die Teilnehmer aus.
+- Beim Start werden sie zufällig in einen K.-o.-Baum gelost. Nicht volle Zweierpotenzen erhalten automatisch Freilose; bei sieben Teilnehmern gibt es drei Erstrundenpartien und ein Freilos.
+- Sieger rücken automatisch weiter. Remis führen zu einem Entscheidungsspiel. Der Turnierbaum und der Sieger bleiben in der Lobby sichtbar.
+
+### Alle gegen Alle
+- Alle Teilnehmer teilen sich ein eigenes, mit der Spielerzahl wachsendes Spielfeld.
+- Jeder startet mit zehn Figuren einschließlich eines Königs und hat eine eigene Farbe.
+- Die Zugfolge wird serverseitig rotiert. Wird ein König geschlagen oder verlässt ein Spieler die Party dauerhaft, scheidet dieser Spieler aus und seine übrigen Figuren werden entfernt.
+- Dies ist eine Mehrspieler-Variante mit angepasster Zug-/Bauernlogik: Es gibt kein klassisches Schachmatt, keine Rochade und keine 8×8-Beschränkung; Ziel ist das Überleben des Königs.
+
+### Team
+- Der Leiter teilt Spieler flexibel auf zwei Teams auf, kann Namen und Farben festlegen und Spieler per Drag-and-drop oder Auswahl zuweisen.
+- Teammitglieder teilen die jeweilige Schachfarbe und wechseln sich pro Teamzug ab. Nur der aktuell eingeteilte Spieler darf ziehen.
+- Verlässt ein Spieler die Party dauerhaft, bleibt ein Team-Slot als Ersatzplatz offen. Der Leiter kann einen anderen Party-Spieler zuweisen.
+
+### Online-Speicherung und Wiederbeitritt
+- Party-Lobbys, Modus-Einstellungen, Turnierbäume, Bretter, Zugverläufe und laufende Uhren werden serverseitig gespeichert und nach einem Server-Neustart wiederhergestellt.
+- Für dauerhafte Speicherung auf einem Host mit flüchtigem Dateisystem ist Upstash Redis (siehe Abschnitt „Konten dauerhaft speichern“) erforderlich. Alternativ muss `DATA_DIR` auf einen dauerhaft gespeicherten Datenträger zeigen.
+- Bei einem Seiten-Reload kann ein Spieler über seinen gespeicherten Party-Code und sein Konto wieder beitreten. Vorübergehend getrennte Spieler bleiben in der Party; ein dauerhaftes Verlassen entfernt sie.
+- Klassische Züge werden serverseitig geprüft (einschließlich legaler Züge, Königssicherheit, Rochade, en passant und Umwandlung). Elo und Gold werden weiterhin ausschließlich für das vorhandene Ranglisten-Matchmaking vergeben, nicht für Party-Spiele.
+
+Der App-Cache wurde auf `schach-v5` erhöht. Nach dem Hochladen des Updates muss der Server neu bereitgestellt werden; installierte Apps laden die neue Oberfläche beim nächsten Neuladen.
+
+## Tests für die Spielmodi
+- `npm test` führt die automatisierten Regel-, Turnier-, FFA-, Team-Rotations- und HTTP-Tests aus.
+- Die Team-Zugfolge überspringt vorübergehend getrennte Teammitglieder; nach einem dauerhaften Austritt kann der Leiter einen neu beigetretenen Spieler dem freien Teamplatz zuweisen.
+- Im Alle-gegen-Alle-Modus sind bis zu 16 Spieler mit jeweils eigener Figurenfarbe vorgesehen.
