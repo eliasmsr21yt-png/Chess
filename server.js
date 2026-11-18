@@ -121,7 +121,7 @@ function renamePartyMember(oldKey,newKey,newName) {
     if(p.ffa) {
       p.ffa.players=(p.ffa.players||[]).map(x=>x.key===oldKey?{...x,key:newKey,name:newName}:x);
       p.ffa.order=(p.ffa.order||[]).map(replace);p.ffa.alive=(p.ffa.alive||[]).map(replace);
-      p.ffa.offline=(p.ffa.offline||[]).map(replace);if(p.ffa.winner===oldKey)p.ffa.winner=newKey;
+      p.ffa.offline=(p.ffa.offline||[]).map(replace);if(p.ffa.winner===oldKey)p.ffa.winner=newKey;if(p.ffa.lastMove){if(p.ffa.lastMove.by===oldKey)p.ffa.lastMove.by=newKey;if(p.ffa.lastMove.captured&&p.ffa.lastMove.captured.owner===oldKey)p.ffa.lastMove.captured.owner=newKey;}
       p.ffa.board=(p.ffa.board||[]).map(x=>x&&x.owner===oldKey?{...x,owner:newKey}:x);
     }
     broadcastParty(p);
@@ -159,7 +159,7 @@ function addPartyMember(p,s) {
   // Eine ausdrücklich gespeicherte Turnierauswahl bleibt verbindlich; neue Gäste
   // werden nicht stillschweigend nach der Auslosung in das Turnier aufgenommen.
   if(p.mode==='team') {if(!p.teams)p.teams={w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'},colors:{w:'#f5f5f5',b:'#252a34'}};if(!(p.teams.w||[]).includes(key)&&!(p.teams.b||[]).includes(key)){const target=(p.teams.w||[]).length<=(p.teams.b||[]).length?'w':'b';p.teams[target].push(key);}}
-  if(p.ffa){p.ffa.offline=(p.ffa.offline||[]).filter(k=>k!==key);}
+  if(p.ffa){p.ffa.offline=(p.ffa.offline||[]).filter(k=>k!==key);s.emit('ffa:state',ffaPublic(p.ffa));}
   // Laufende Partie nach einem Reload wieder aufnehmen.
   const g=(p.games||[]).find(x=>x.status==='running' && ((x.whiteKeys||[]).includes(key)||(x.blackKeys||[]).includes(key)));
   if(g && g.kind!=='ffa') {
@@ -438,12 +438,13 @@ function partyStart(s,p) {
 }
 function ffaPublic(f) {
   if(!f)return null;
-  return {size:f.size,board:f.board,cells:f.cells||null,layout:f.layout||'legacy',players:f.players.map(x=>({...x,connected:!(f.offline||[]).includes(x.key)})),order:f.order,alive:f.alive,turn:f.turn,turnKey:f.order[f.turn]||null,winner:f.winner||null,winnerTeam:f.winnerTeam||null,coWinners:f.coWinners||[],moves:f.moves||0};
+  return {size:f.size,depth:f.depth,centerSize:f.centerSize||8,pieceCount:f.pieceCount||16,board:f.board,cells:f.cells||null,layout:f.layout||'legacy',players:f.players.map(x=>({...x,connected:!(f.offline||[]).includes(x.key)})),order:f.order,alive:f.alive,turn:f.turn,turnKey:f.order[f.turn]||null,winner:f.winner||null,winnerTeam:f.winnerTeam||null,coWinners:f.coWinners||[],moves:f.moves||0,lastMove:f.lastMove||null};
 }
-// Vierseitiges Brett wie beim Vorbild: ein 10x10-Schachfeld in der Mitte,
-// vier Startstreifen außen und abgeschrägte, helle Eckbereiche.
-const FFA_BACK_RANK=['R','N','B','Q','K'];
-const FFA_PAWN_RANK=['P','P','P','P','P'];
+// Vierseitiges Brett exakt nach dem Foto: 8x8-Mittelfeld und vier 2x8-Startarme.
+// Jeder Spieler startet mit einer vollständigen 8er-Grundreihe plus 8 Bauern.
+const FFA_CENTER_SIZE=8;
+const FFA_BACK_RANK=['R','N','B','Q','K','B','N','R'];
+const FFA_PAWN_RANK=Array(8).fill('P');
 const FFA_SIDES=[
   {id:'top',color:'#f4b51b',forward:{x:0,y:1}},       // Gelb
   {id:'right',color:'#16b978',forward:{x:-1,y:0}},   // Grün
@@ -458,23 +459,21 @@ function createFFAState(p) {
   const naturalSeats=soloMembers.length===2?[0,2]:soloMembers.length===3?[0,1,2]:[0,1,2,3];
   const soloSeats=explicitlyUsed.size?(freeSides.length?freeSides:[0,1,2,3]):naturalSeats;
   let soloIndex=0;
-  members.forEach((m,i)=>{
+  members.forEach(m=>{
     const assigned=p.ffaTeams&&p.ffaTeams[m.key];
-    // Gruppe 1-4 legt die Brettseite und Allianz fest; Einzelspieler werden
-    // zunächst gegenüberliegend bzw. im Uhrzeigersinn verteilt.
     const sideIndex=assigned&&assigned!=='solo'?Math.max(0,Math.min(3,Number(assigned)-1)):soloSeats[soloIndex++%soloSeats.length];
     sideOf.set(m.key,sideIndex);
     if(!groups.has(sideIndex))groups.set(sideIndex,[]);
     groups.get(sideIndex).push(m);
   });
   const maxPerSide=Math.max(1,...[0,1,2,3].map(side=>(groups.get(side)||[]).length));
-  const depth=maxPerSide*2,size=10+depth*2,board=Array(size*size).fill(null);
+  // Zwei Reihen pro Spieler, außerhalb des zentralen 8x8-Feldes.
+  const depth=maxPerSide*2,size=FFA_CENTER_SIZE+depth*2,board=Array(size*size).fill(null);
   const cells=Array(size*size).fill(false);
-  // Kreuzfläche: 10x10 Mitte plus vier 10 Felder breite Startarme.
   for(let y=0;y<size;y++)for(let x=0;x<size;x++){
-    const inCenter=x>=depth&&x<depth+10&&y>=depth&&y<depth+10;
-    const inTopBottom=x>=depth&&x<depth+10&&(y<depth||y>=depth+10);
-    const inLeftRight=y>=depth&&y<depth+10&&(x<depth||x>=depth+10);
+    const inCenter=x>=depth&&x<depth+FFA_CENTER_SIZE&&y>=depth&&y<depth+FFA_CENTER_SIZE;
+    const inTopBottom=x>=depth&&x<depth+FFA_CENTER_SIZE&&(y<depth||y>=depth+FFA_CENTER_SIZE);
+    const inLeftRight=y>=depth&&y<depth+FFA_CENTER_SIZE&&(x<depth||x>=depth+FFA_CENTER_SIZE);
     cells[y*size+x]=inCenter||inTopBottom||inLeftRight;
   }
   const players=members.map(m=>{
@@ -485,28 +484,27 @@ function createFFAState(p) {
   });
   const place=(x,y,piece)=>{if(x>=0&&x<size&&y>=0&&y<size&&cells[y*size+x])board[y*size+x]=piece;};
   players.forEach(pl=>{
-    // Zwei Reihen mit je fünf Figuren. Mehrere Verbündete teilen eine
-    // Brettseite, erhalten aber getrennte Startblöcke entlang des Arms.
-    const slot=pl.sideSlot,outer=slot*2,inner=outer+1;
-    for(let k=0;k<5;k++){
-      const major=FFA_BACK_RANK[k],pawn=FFA_PAWN_RANK[k],majorOffset=k*2,pawnOffset=k*2+1;
+    const outer=pl.sideSlot*2,inner=outer+1;
+    for(let k=0;k<FFA_CENTER_SIZE;k++){
+      const major=FFA_BACK_RANK[k],pawn=FFA_PAWN_RANK[k];
       if(pl.side==='top'){
-        place(depth+majorOffset,outer,{type:major,owner:pl.key});
-        place(depth+pawnOffset,inner,{type:pawn,owner:pl.key});
+        place(depth+k,outer,{type:major,owner:pl.key});
+        place(depth+k,inner,{type:pawn,owner:pl.key});
       } else if(pl.side==='bottom'){
-        place(depth+majorOffset,size-1-outer,{type:major,owner:pl.key});
-        place(depth+pawnOffset,size-2-outer,{type:pawn,owner:pl.key});
+        place(depth+k,size-1-outer,{type:major,owner:pl.key});
+        place(depth+k,size-2-outer,{type:pawn,owner:pl.key});
       } else if(pl.side==='left'){
-        place(outer,depth+majorOffset,{type:major,owner:pl.key});
-        place(inner,depth+pawnOffset,{type:pawn,owner:pl.key});
+        place(outer,depth+k,{type:major,owner:pl.key});
+        place(inner,depth+k,{type:pawn,owner:pl.key});
       } else {
-        place(size-1-outer,depth+majorOffset,{type:major,owner:pl.key});
-        place(size-2-outer,depth+pawnOffset,{type:pawn,owner:pl.key});
+        place(size-1-outer,depth+k,{type:major,owner:pl.key});
+        place(size-2-outer,depth+k,{type:pawn,owner:pl.key});
       }
     }
   });
-  return {layout:'cross',size,depth,cells,board,players,order:players.map(x=>x.key),alive:players.map(x=>x.key),offline:[],turn:0,winner:null,moves:0};
+  return {layout:'cross',centerSize:FFA_CENTER_SIZE,pieceCount:16,size,depth,cells,board,players,order:players.map(x=>x.key),alive:players.map(x=>x.key),offline:[],turn:0,winner:null,moves:0,lastMove:null};
 }
+
 function ffaPathClear(f,fx,fy,tx,ty) {
   const {board,size:n,cells}=f,dx=Math.sign(tx-fx),dy=Math.sign(ty-fy);let x=fx+dx,y=fy+dy;
   while(x!==tx||y!==ty){const at=y*n+x;if((cells&&!cells[at])||board[at])return false;x+=dx;y+=dy;}
@@ -562,7 +560,9 @@ function ffaMove(p,s,d) {
   const f=p.ffa,key=pkey(s);
   if(!f||f.winner||f.order[f.turn]!==key||!ffaLegal(f,key,Number(d&&d.from),Number(d&&d.to)))return false;
   const piece=f.board[d.from],target=f.board[d.to];
-  f.board[d.to]=piece;f.board[d.from]=null;f.moves++;
+  const moveNumber=(f.moves||0)+1;
+  f.lastMove={from:Number(d.from),to:Number(d.to),by:key,piece:piece.type,captured:target?{type:target.type,owner:target.owner}:null,number:moveNumber};
+  f.board[d.to]=piece;f.board[d.from]=null;f.moves=moveNumber;
   if(target&&target.type==='K') {
     f.alive=f.alive.filter(k=>k!==target.owner);
     f.board=f.board.map(x=>x&&x.owner===target.owner?null:x);
@@ -1289,4 +1289,4 @@ io.on('connection', s => {
 const PORT = process.env.PORT || 3000;
 if (require.main === module) loadUsers().then(async () => { await loadParties(); web.listen(PORT, () => console.log('Schach läuft auf Port ' + PORT)); });
 
-module.exports = { web, __test: { startBoard, chLegal, chApplyMove, serverGameEnd, chPositionKey, buildTournamentBracket, buildTournamentPreview, advanceTournament, enqueueLowerLosers, finishPartyGame, setPartyForTest: p => parties.set(p.code, p), createFFAState, ffaLegal, areFFAAllies, ffaWinner, canPartyMove, partyTeamIndex, partyTurnView } };
+module.exports = { web, __test: { startBoard, chLegal, chApplyMove, serverGameEnd, chPositionKey, buildTournamentBracket, buildTournamentPreview, advanceTournament, enqueueLowerLosers, finishPartyGame, setPartyForTest: p => parties.set(p.code, p), createFFAState, ffaLegal, areFFAAllies, ffaWinner, ffaMove, ffaPublic, addPartyMember, canPartyMove, partyTeamIndex, partyTurnView } };

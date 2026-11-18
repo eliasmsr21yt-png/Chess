@@ -143,3 +143,54 @@ Prüfung: `npm test` sowie die Syntaxprüfung des eingebetteten Frontend-JavaScr
 - Die Service-Worker-Version wurde auf `schach-v8` erhöht, damit installierte Apps die neue Brettdarstellung laden.
 
 Prüfung: `npm test` (23 automatisierte Tests) und `node --check` für Server und eingebettetes Frontend-JavaScript. Ein echter Mehrbrowser-Test mit mehreren Live-Socket-Verbindungen ist weiterhin nach dem Deployment erforderlich.
+
+
+## Update 17 – FFA-Brett vollständig nach der Foto-Vorlage und bessere Zugübersicht
+
+- Das FFA-Brett entspricht jetzt der Geometrie des Fotos: 8×8 Felder in der Mitte, vier 2×8-Startarme und abgeschrägte Plattenecken. Die Startarme verwenden dieselben grünen/elfenbeinfarbenen Schachfelder wie das Zentrum; die äußeren Ecken bleiben helle Brettplatte.
+- Jeder Spieler startet mit der vollständigen 8er-Grundreihe (Turm, Springer, Läufer, Dame, König, Läufer, Springer, Turm) und acht Bauern – also 16 statt zuvor 10 Figuren.
+- Bei mehreren Spielern auf derselben Seite bekommt jede Person ihren eigenen zwei Reihen breiten Startblock. Die Bretttiefe wächst entsprechend der Gruppengröße.
+- Oben steht jederzeit gut sichtbar die aktuelle Spielzugnummer, der aktive Spieler, seine Brettseite und ob du selbst am Zug bist. Die Startzone des aktiven Spielers wird auf dem Brett markiert.
+- Beim Auswählen einer Figur werden erlaubte Zielfelder gelb und mögliche Schlagfelder rot markiert. Der Server prüft jeden Zug weiterhin unabhängig.
+- Eine kompakte Spielerübersicht zeigt lebende und ausgeschiedene Spieler, Verbindung und verbleibende Figuren. Darunter wird die Zugfolge nummeriert angezeigt.
+- Die Bedienleiste klassischer Schachpartien wird im FFA-Modus ausgeblendet. Das Brett bleibt auf mobilen Bildschirmen eingepasst; bei großen Allianzbrettern kann gezielt gezoomt und gescrollt werden.
+- Service-Worker-Cache auf `schach-v9` erhöht.
+
+Prüfung: `npm test`, Server-Syntaxprüfung und eingebettete Frontend-Syntaxprüfung. Ein Test mit mehreren echten Browsern und Live-Socket-Verbindungen ist weiterhin nach dem Deployment erforderlich.
+
+
+## Update 17 – FFA-Brett und Zugübersicht
+
+- Das Alle-gegen-Alle-Brett verwendet jetzt die 8×8-Mitte mit vier 2×8-Startarmen wie auf der bereitgestellten Brettvorlage.
+- Jeder Teilnehmer startet mit 16 Figuren: acht Grundfiguren (Turm, Springer, Läufer, Dame, König, Läufer, Springer, Turm) und acht Bauern.
+- Die Figuren sind als eigene skalierbare SVG-Grafiken gestaltet, damit Form, Farbe und Schatten auf PC und Smartphone einheitlich dargestellt werden.
+- Aktive Startreihe, ausgewähltes Feld, legale Zielfelder und Schlagfelder sind separat markiert.
+- Die Oberfläche zeigt Zugnummer, Spieler am Zug, Reihenfolge, Figurenbestand und den letzten Zug.
+- Der Server speichert und verteilt den letzten Zug an alle Spieler und Zuschauer.
+- Der Service-Worker-Cache wurde auf `schach-v10` angehoben.
+
+### Prüfung
+
+`npm test` enthält jetzt 26 Tests. Zusätzlich wurden `server.js` und das eingebettete Frontend-JavaScript mit `node --check` geprüft. Ein echter Mehrbrowser-Online-Test benötigt weiterhin ein laufendes Deployment.
+
+
+## Update 17 – FFA-Brett und Bedienoberfläche
+
+- Das FFA-Brett bildet das Vorbild als 8×8-Mittelfeld mit vier 2×8-Startarmen und abgeschrägten Ecken ab.
+- Jeder Spieler startet mit 16 Figuren: acht Grundfiguren und acht Bauern. Die vier Seiten sind zum Zentrum ausgerichtet.
+- Figuren werden mit skalierbaren, schattierten Vektorgrafiken dargestellt; sie sind nicht von Emoji- oder Systemzeichensätzen abhängig.
+- Die Zuganzeige zeigt die fortlaufende Spielzugnummer, die Position des aktiven Spielers in der Zugfolge, den aktiven Spieler, den letzten Zug sowie markierte legale Ziele.
+- Spielerübersicht, Figuren-Legende, responsive Karten und einheitlichere Schaltflächen verbessern die Orientierung auf Desktop und Smartphone.
+- Der Service-Worker-Cache wurde auf `schach-v11` aktualisiert.
+
+
+## Update 17.1 – vollständige Figuren und klarere Zuganzeige
+
+- Die FFA-Aufstellung wurde mit der 8×8-Mitte und vier 2×8-Armen abgeglichen. Jede der vier Seiten erhält sichtbar acht Grundfiguren und acht Bauern (16 Figuren pro Spieler). Die Eckbereiche der oktogonalen Brettplatte bleiben frei und beschneiden keine Startpositionen.
+- Die Figuren-SVGs wurden mit abgestuften Sockeln, dezenteren Konturen, Glanzlichtern und plastischeren Farbverläufen überarbeitet.
+- Die Zuganzeige unterscheidet nun eindeutig die fortlaufende Zugnummer von der aktuellen Spielerposition (z. B. „Spieler 2 / 4“). Nach einem Ausscheiden wird die Position anhand der noch lebenden Spieler berechnet. Name, Brettseite, eigener Zugstatus, Zugfolge und letzter Zug bleiben sichtbar.
+- Brettfelder, aktive Startzone, legale Zielfelder und Schlagfelder haben klarer getrennte Farben. Spielerübersicht, Teamfarben und Zähler bleiben responsive.
+- Menüs, Formulare und Schaltflächen wurden durchgängig mit ruhigeren Abständen, Fokuszuständen, Karten und mobilen Abständen vereinheitlicht.
+- Service-Worker-Cache auf `schach-v12` erhöht, damit die aktualisierte Oberfläche nach dem Deployment neu geladen wird.
+
+Prüfung: `npm test` (28 Tests), `node --check server.js` und Syntaxprüfung des eingebetteten Frontend-JavaScripts. Die FFA-Aufstellung wird zusätzlich auf die 16 Figuren je Spieler sowie auf ein 12×12-Brett mit 128 bespielbaren Feldern bei vier Spielern geprüft. Ein Live-Test mit mehreren echten Browsern bleibt nach dem Deployment erforderlich.

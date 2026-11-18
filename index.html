@@ -207,29 +207,93 @@ input{-webkit-user-select:text;user-select:text;font:inherit}
 .party-match .winner{color:#00a152;font-weight:600}
 .party-tag{font-size:11px;padding:3px 7px;border-radius:999px;background:rgba(41,121,255,.14);color:#2979ff}
 .party-hint{font-size:12px;color:var(--text-secondary);line-height:1.45}
-/* FFA-Brett nach dem Vierfarben-Vorbild: helle, abgeschrägte Platte,
-   grünes 10x10-Mittelfeld und vier Figurenränge an den Seiten. */
-#bd.ffa{width:100%;min-width:0;max-width:none;aspect-ratio:1;grid-auto-rows:1fr;gap:1px;background:transparent;touch-action:pan-y pinch-zoom;border-radius:0;margin:0 auto;user-select:none;clip-path:none;overflow:visible}
-.ffa-board-wrap{width:min(100%,460px);max-width:460px;aspect-ratio:1;margin:0 auto;padding:8px;box-sizing:border-box;overflow:hidden;overscroll-behavior:contain;background:#eee8d9;clip-path:polygon(8% 0,92% 0,100% 8%,100% 92%,92% 100%,8% 100%,0 92%,0 8%);}
+/* Foto-Vorbild: 8x8-Mitte, je vier 2x8-Startarme, acht Figuren + acht Bauern. */
+#bd.ffa{width:100%;min-width:0;max-width:none;aspect-ratio:1;grid-auto-rows:minmax(0,1fr);gap:1px;background:#d5d0c2;touch-action:manipulation;border-radius:0;margin:0 auto;user-select:none;clip-path:none;overflow:visible}
+.ffa-board-wrap{width:100%;max-width:452px;aspect-ratio:1;margin:8px auto 12px;padding:clamp(6px,1.5vw,10px);box-sizing:border-box;overflow:auto;overscroll-behavior:contain;background:linear-gradient(145deg,#fffef8 0%,#f2eedf 48%,#d7cfbd 100%);clip-path:polygon(16.6667% 0,83.3333% 0,100% 16.6667%,100% 83.3333%,83.3333% 100%,16.6667% 100%,0 83.3333%,0 16.6667%);box-shadow:inset 0 1px 0 rgba(255,255,255,.94),inset 0 -3px 0 rgba(95,83,61,.18),0 8px 22px rgba(25,40,30,.20);transform:perspective(1100px) rotateX(11deg);transform-origin:center 50%;}
+.ffa-board-wrap::-webkit-scrollbar{width:7px;height:7px}.ffa-board-wrap::-webkit-scrollbar-thumb{background:rgba(55,70,60,.35);border-radius:99px}
+.fq{position:relative;display:grid;place-items:center;aspect-ratio:1;min-width:0;min-height:0;cursor:pointer;user-select:none;box-sizing:border-box;touch-action:manipulation}
+.fq.light{background:linear-gradient(145deg,#faf8ef 0%,#eee9dc 100%);box-shadow:inset 0 0 0 1px rgba(120,112,92,.08)}.fq.dark{background:linear-gradient(145deg,#2d7355 0%,#1a503a 100%);box-shadow:inset 0 0 0 1px rgba(0,0,0,.09)}.fq.offboard{visibility:hidden;pointer-events:none}
+.fq.selected{outline:3px solid #ffc928;outline-offset:-3px;z-index:3}
+.fq.ffa-active-start{box-shadow:inset 0 0 0 2px #ffca28,inset 0 0 12px rgba(255,202,40,.38);z-index:1}
+.fq.ffa-last-from{box-shadow:inset 0 0 0 3px rgba(37,99,235,.92),inset 0 0 12px rgba(37,99,235,.20)}
+.fq.ffa-last-to{box-shadow:inset 0 0 0 3px rgba(37,99,235,.95),inset 0 0 14px rgba(37,99,235,.34)}
+.fq.ffa-target::after{content:'';position:absolute;width:28%;height:28%;border-radius:50%;background:rgba(255,196,0,.94);box-shadow:0 1px 5px rgba(0,0,0,.35);pointer-events:none;z-index:2}
+.fq.ffa-target.ffa-capture::after{width:86%;height:86%;background:transparent;border:3px solid rgba(255,103,73,.95);box-sizing:border-box}
+.fq .fp{font-size:var(--ffa-piece-size,clamp(10px,2.7vw,27px));line-height:1;pointer-events:none;display:block;text-align:center}
+.ffa-piece-svg{display:block;width:100%;height:100%;max-width:100%;max-height:100%;overflow:visible;pointer-events:none;filter:drop-shadow(0 2px 1px rgba(0,0,0,.28)) drop-shadow(0 0 1px rgba(0,0,0,.16));}
+.ffa-topline{display:flex;align-items:center;gap:10px;border:1px solid var(--border);background:var(--surface);border-radius:14px;padding:9px 11px;min-height:54px;box-shadow:0 2px 10px rgba(0,0,0,.05)}
+.ffa-turn-number{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:64px;padding-right:10px;border-right:1px solid var(--border)}
+.ffa-turn-number small{font-size:9px;letter-spacing:.09em;color:var(--text-secondary);font-weight:850}.ffa-turn-number strong{font-size:30px;line-height:1.02;font-variant-numeric:tabular-nums;color:var(--text-primary)}.ffa-turn-number em{font-size:9px;font-style:normal;color:var(--text-secondary);font-weight:700;margin-top:3px;white-space:nowrap}
+.ffa-turn-main{min-width:0;flex:1;display:flex;align-items:center;gap:8px}.ffa-turn-dot{width:13px;height:13px;border-radius:50%;border:1px solid rgba(0,0,0,.24);flex:none}
+.ffa-turn-copy{min-width:0;display:flex;flex-direction:column;line-height:1.25}.ffa-turn-copy strong{font-size:15px;white-space:normal;letter-spacing:-.01em}.ffa-turn-copy small{font-size:11px;color:var(--text-secondary)}
+.ffa-turn-badge{border-radius:999px;padding:6px 9px;background:rgba(127,127,127,.12);color:var(--text-secondary);font-size:10px;font-weight:800;letter-spacing:.04em;white-space:nowrap}
+.ffa-turn-badge.mine{background:rgba(0,180,90,.15);color:#078b4a}
+.ffa-turn-badge.done{background:rgba(41,121,255,.15);color:#2979ff}
+#ffa-panel{border:1px solid var(--border);background:var(--surface);border-radius:16px;padding:12px;margin:8px auto 12px;box-shadow:0 2px 10px rgba(0,0,0,.04)}
+.ffa-panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}.ffa-panel-head strong{font-size:14px}.ffa-panel-head small{display:block;color:var(--text-secondary);font-size:11px}
+.ffa-tools{display:flex;gap:6px;justify-content:flex-end;align-items:center;flex-wrap:wrap}.ffa-tools button{min-width:38px;min-height:34px;width:auto;padding:0 9px;font-size:14px}
+.ffa-player-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.ffa-player-card{display:flex;align-items:center;gap:7px;min-width:0;padding:8px 9px;border:1px solid var(--border);border-radius:11px;background:rgba(127,127,127,.06);transition:border-color .15s,background .15s}
+.ffa-player-card.active{border:2px solid #eab308;background:rgba(234,179,8,.12);padding:6px 7px;box-shadow:0 0 0 2px rgba(234,179,8,.10)}
+.ffa-player-card.out{opacity:.44;filter:grayscale(.7)}
+.ffa-player-dot{width:10px;height:10px;border-radius:50%;flex:none;border:1px solid rgba(0,0,0,.24)}
+.ffa-player-info{min-width:0;flex:1;display:flex;flex-direction:column;line-height:1.25}.ffa-player-info strong{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ffa-player-info small{font-size:10px;color:var(--text-secondary)}
+.ffa-player-count{font-size:10px;font-weight:750;color:var(--text-secondary);white-space:nowrap}
+.ffa-order-title{font-size:12px;font-weight:750;margin:12px 0 6px}.ffa-order{display:flex;gap:5px;flex-wrap:wrap}
+.ffa-order-step{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:999px;padding:4px 7px;font-size:10px;color:var(--text-secondary);background:rgba(127,127,127,.06)}
+.ffa-order-step.active{border-color:#eab308;background:rgba(234,179,8,.13);color:var(--text-primary);font-weight:800}.ffa-order-step.out{text-decoration:line-through;opacity:.45}
+.ffa-last-move{font-size:11px;color:var(--text-secondary);margin-top:9px;padding:10px 11px;border:1px solid var(--border);border-radius:11px;background:rgba(127,127,127,.05);font-variant-numeric:tabular-nums}.ffa-figure-legend{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}.ffa-figure-legend span{font-size:9px;color:var(--text-secondary);background:rgba(127,127,127,.08);padding:4px 6px;border-radius:6px}
+.ffa-last-move b{color:var(--text-primary)}
+.ffa-board-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:12px 4px 5px}
+.ffa-board-heading strong{font-size:14px;letter-spacing:.045em}
+.ffa-board-heading small{display:block;color:var(--text-secondary);font-size:11px;margin-top:2px}
+.ffa-board-heading .ffa-board-size{font-size:10px;color:var(--text-secondary);background:rgba(127,127,127,.10);padding:5px 8px;border-radius:999px;white-space:nowrap}
+.ffa-order-step b{font-size:9px;opacity:.7}.ffa-help{margin-top:9px;padding:8px 9px;border-radius:10px;background:rgba(41,121,255,.08);font-size:11px;line-height:1.4;color:var(--text-secondary)}
+#gm.ffa-active>.rw,#gm.ffa-active>#pmr,#gm.ffa-active>#pq,#gm.ffa-active>#game-bottom-actions{display:none!important}
+.ffa-st{padding:0!important;min-height:54px!important;background:transparent!important;color:var(--text-primary)!important}
 .tourney-result-actions{display:grid;grid-template-columns:1fr;gap:9px;width:min(100%,360px);margin-top:18px}
 .tourney-result-actions button{min-height:46px;padding:12px 16px;border:1px solid currentColor;border-radius:12px;background:rgba(0,0,0,.10);color:inherit;font:inherit;font-weight:700;cursor:pointer}
 .tourney-result-actions button:active{transform:scale(.98)}
-.ffa-tools{display:flex;gap:8px;justify-content:center;align-items:center;margin:8px auto;flex-wrap:wrap}.ffa-tools button{min-width:42px;min-height:40px}
+@media(min-width:420px){.ffa-player-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:520px){.ffa-board-wrap{width:100%;max-width:100%;padding:5px;margin:5px auto 8px;transform:perspective(900px) rotateX(8deg)}.ffa-topline{padding:8px;gap:7px}.ffa-turn-number{min-width:54px;padding-right:7px}.ffa-turn-number strong{font-size:25px}.ffa-turn-copy strong{font-size:13px}.ffa-turn-copy small{font-size:10px}.ffa-turn-badge{font-size:9px;padding:5px 7px}#ffa-panel{padding:9px}.ffa-player-grid{gap:5px}.ffa-player-card{padding:6px}.ffa-player-card.active{padding:5px}.ffa-player-info strong{font-size:11px}.ffa-board-heading{margin:9px 2px 4px}.ffa-figure-legend span{font-size:8px;padding:4px 5px}}
 .party-intermission{border:1px solid rgba(41,121,255,.35);background:rgba(41,121,255,.08);border-radius:14px;padding:12px;margin:12px 0;text-align:center}
 .party-result-time{font-size:11px;color:var(--text-secondary);margin-top:5px;line-height:1.4}
 .party-watch-btn{min-height:38px;white-space:nowrap}.party-lower{border-color:rgba(255,145,0,.35)}
 .party-match button{margin-top:7px}
-@media(max-width:520px){.party-round{flex-basis:160px;min-width:160px}.party-match{padding:8px;font-size:12px}.party-rounds{gap:8px}.ffa-board-wrap{width:min(100%,calc(100vw - 20px));max-width:calc(100vw - 20px);padding:5px}}
-.fq{position:relative;display:grid;place-items:center;aspect-ratio:1;min-width:0;min-height:0;cursor:pointer;user-select:none;box-sizing:border-box}
-.fq.light{background:#f3f1e6}.fq.dark{background:#205a45}
-.fq.pad{background:#eee8d9;border:1px solid rgba(105,90,60,.10)}
+@media(max-width:520px){.party-round{flex-basis:160px;min-width:160px}.party-match{padding:8px;font-size:12px}.party-rounds{gap:8px}}
+.fq.light{background:#f1eee3}.fq.dark{background:#245a43}
 .fq.offboard{visibility:hidden;pointer-events:none}
-.fq.selected{outline:3px solid #ffca28;outline-offset:-3px;z-index:2}
-.fq .fp{font-family:"Segoe UI Symbol","Apple Symbols","Noto Sans Symbols 2",sans-serif;font-size:var(--ffa-piece-size,clamp(10px,2.7vw,27px));line-height:1;pointer-events:none;text-shadow:0 1px 2px rgba(0,0,0,.45)}
-.ffa-meta{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}.ffa-order{font-size:12px;line-height:1.5;color:var(--text-secondary);overflow-wrap:anywhere}.ffa-order .active{font-weight:700;color:var(--text-primary)}.ffa-order .out{text-decoration:line-through;opacity:.45}
-.ffa-chip{display:flex;align-items:center;gap:5px;border:1px solid var(--border);background:rgba(127,127,127,.1);padding:5px 8px;border-radius:12px;font-size:12px}
-.ffa-chip.out{opacity:.4;text-decoration:line-through}
+.fq.selected{outline:3px solid #ffca28;outline-offset:-3px;z-index:3}
+#gm.ffa-active #ar{display:none}
 @media(max-width:420px){.mode-grid{gap:7px}.mode-card{padding:11px;min-height:106px}.mode-title{font-size:14px}.party-pair{gap:4px}.party-field{font-size:12px;padding:7px 5px}}
+
+/* Einheitliche, ruhigere Bedienoberfläche auf allen Ansichten */
+:root{--radius:13px;--ui-shadow:0 5px 18px rgba(20,28,44,.07);--ui-accent:#2878ee;--ui-accent-soft:rgba(40,120,238,.11)}
+#wr{max-width:520px;padding:14px 16px 32px}
+button,select,input,textarea{transition:background-color .15s,border-color .15s,box-shadow .15s,transform .12s}
+button{font-weight:600;letter-spacing:.005em}
+button:disabled,select:disabled,input:disabled{opacity:.48;cursor:not-allowed}
+button:not(:disabled):active{transform:translateY(1px);opacity:.88}
+@media(hover:hover){button:not(:disabled):hover{border-color:var(--ui-accent)}.cd:hover{border-color:rgba(40,120,238,.42);transform:translateY(-1px)}}
+input:not([type=checkbox]):not([type=radio]):not([type=color]),textarea,select{box-sizing:border-box;max-width:100%;border-radius:12px}
+input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid rgba(40,120,238,.24);border-color:var(--ui-accent)}
+.mt{font-weight:650;letter-spacing:-.025em}
+.mh{gap:12px;margin-bottom:20px}
+.sec{margin-bottom:20px}
+.lb{font-size:12px;font-weight:750;letter-spacing:.025em;margin-bottom:9px}
+.cd{min-height:72px;padding:12px 14px;border:1px solid var(--border-strong);border-radius:16px;background:var(--surface);box-shadow:var(--ui-shadow);transition:transform .15s,border-color .15s,box-shadow .15s}
+.ci{width:48px;height:48px;border-radius:14px}
+.go{min-height:52px;border-radius:14px;font-weight:750;box-shadow:0 5px 14px rgba(0,200,83,.16)}
+.rs{min-height:46px;border-radius:13px}
+.mode-card{border:1px solid var(--border-strong);background:var(--surface);box-shadow:var(--ui-shadow);transition:transform .15s,border-color .15s,background .15s}
+.mode-card.active{border:2px solid var(--ui-accent);background:var(--ui-accent-soft);padding:13px}
+.party-panel{padding:14px;border-radius:15px;background:var(--surface);box-shadow:var(--ui-shadow)}
+.party-row{gap:10px;min-height:44px}
+.party-field{min-height:42px;border-radius:11px}
+.party-match{border-radius:13px}
+#st{line-height:1.42}
+@media(max-width:520px){#wr{padding:10px 12px 24px}.mh{margin-bottom:17px}.cd{min-height:66px;padding:10px 11px}.ci{width:44px;height:44px}.party-panel{padding:11px}.go{min-height:49px}}
+@media(prefers-reduced-motion:reduce){button,.cd,.mode-card{transition:none}}
 
 </style>
 </head>
@@ -243,7 +307,7 @@ input{-webkit-user-select:text;user-select:text;font:inherit}
 <div class="rw"><span id="cb" class="cl"></span><span style="margin-left:auto;display:flex;gap:8px"><button id="er" class="pn" aria-label="Pfeile löschen"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 20h-10.5l-4.2-4.3a1 1 0 0 1 0-1.4l10-10a1 1 0 0 1 1.4 0l5 5a1 1 0 0 1 0 1.4l-9.2 9.3"/><path d="M18 13.3l-6.3-6.3"/></svg></button><button id="pb" class="pn" aria-label="Stift"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M13.5 6.5l3 3"/></svg></button></span></div>
 <div class="rw" id="pmr" style="justify-content:flex-start;gap:8px;min-height:40px"><button id="pm" class="pn" aria-label="Premove-Modus"><span class="pmi">&#9823;&#xFE0E;<span class="pmb">&#9889;</span></span></button><button id="pc" class="pn" style="display:none" aria-label="Letzten Premove löschen">↶</button><button id="pa" class="pn" style="display:none" aria-label="Alle Premoves löschen">✕</button><span id="pmt" style="font-size:13px;color:var(--text-secondary)"></span></div>
 <div id="pq" style="font-size:14px;color:var(--text-secondary)"></div>
-<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px"><button id="un">Zug zurück</button><button id="fl">Brett drehen</button></div>
+<div id="game-bottom-actions" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px"><button id="un">Zug zurück</button><button id="fl">Brett drehen</button></div>
 </div>
 <div id="mn"></div>
 </div>
@@ -286,7 +350,7 @@ let ef={w:'',b:''},P=null,AU=null,SHOP={},note='',authMsg='',pnm='',sent=0,dg=nu
 const SK={fire:{n:'Feuer',c:'#ff6d00',e:'🔥'},bolt:{n:'Blitz',c:'#ffee58',e:'⚡'},ice:{n:'Eis',c:'#80d8ff',e:'❄'},gold:{n:'Gold',c:'#ffc400',e:'★'},neon:{n:'Neon',c:'#69f0ae',e:'✦'},rainbow:{n:'Regenbogen',c:'#ff4081',e:'✺'},ghost:{n:'Geist',c:'#cfe8ff',e:'👻'},toxic:{n:'Gift',c:'#76ff03',e:'☣'},sakura:{n:'Sakura',c:'#ff8ab8',e:'🌸'},thunder:{n:'Donner',c:'#b388ff',e:'⛈'},diamond:{n:'Diamant',c:'#e0f7fa',e:'💎'},phoenix:{n:'Phönix',c:'#ff7043',e:'✨',L:1},aurora:{n:'Aurora',c:'#80deea',e:'🌌'},celestial:{n:'Celestial',c:'#fff4b0',e:'✦',L:1}};
 const esc=s=>String(s).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';'),own=id=>!!(P&&P.owned&&P.owned.includes(id));
 const fmtTimeMs=v=>v==null?'—':String(Math.floor(Math.max(0,v)/60000)).padStart(2,'0')+':'+String(Math.floor(Math.max(0,v)/1000)%60).padStart(2,'0');
-const partyStateSignature=d=>JSON.stringify({mode:d.mode,tc:d.tc,status:d.status,players:(d.players||[]).map(x=>[x.key,x.name,x.connected,x.currentGame]),pairings:d.pairings,tournamentPlayers:d.tournamentPlayers,tournamentPreview:d.tournamentPreview,teams:d.teams,ffaTeams:d.ffaTeams,games:(d.games||[]).map(g=>[g.code,g.status,g.winner,g.bracket,g.round,g.times]),tournament:d.tournament,ffa:d.ffa?{size:d.ffa.size,alive:d.ffa.alive,turn:d.ffa.turn,turnKey:d.ffa.turnKey,winner:d.ffa.winner,winnerTeam:d.ffa.winnerTeam}:null});
+const partyStateSignature=d=>JSON.stringify({mode:d.mode,tc:d.tc,status:d.status,players:(d.players||[]).map(x=>[x.key,x.name,x.connected,x.currentGame]),pairings:d.pairings,tournamentPlayers:d.tournamentPlayers,tournamentPreview:d.tournamentPreview,teams:d.teams,ffaTeams:d.ffaTeams,games:(d.games||[]).map(g=>[g.code,g.status,g.winner,g.bracket,g.round,g.times]),tournament:d.tournament,ffa:d.ffa?{size:d.ffa.size,alive:d.ffa.alive,turn:d.ffa.turn,turnKey:d.ffa.turnKey,moves:d.ffa.moves,lastMove:d.ffa.lastMove,winner:d.ffa.winner,winnerTeam:d.ffa.winnerTeam}:null});
 const efc=s=>{const x=lk0().ef[s];return x?' fx-'+x:''},bxc=()=>{const L=lk0();return[L.th.w,L.th.b].map(i=>TH[i]&&TH[i].x).filter(Boolean).join(' ')};
 const pers=()=>{try{localStorage.setItem('chessAuth',JSON.stringify(AU));localStorage.setItem('chessProfile',JSON.stringify(P));localStorage.setItem('chessElo',elo)}catch(x){}};
 const savePro=()=>{pers();socket?.emit('profile:save',{presets:P.presets,av:P.av|0})};
@@ -585,7 +649,7 @@ ed=Math.round(32*(sc-1/(1+10**((opp.e-elo)/400))));elo=Math.max(100,elo+ed);
 try{localStorage.setItem('chessElo',elo)}catch(x){}}
 function applyPartyTeamColors(colors){if(!onlineTeamGame||!colors)return;const a=colors.w||'#f5f5f5',b=colors.b||'#252a34';wr.style.setProperty('--cw',a);wr.style.setProperty('--cb',b)}
 function startGame(m){
-tournamentResultPending=false;deferredTournamentGameStart=null;mode=m;if(m!=='online'){onlineSpectator=false;onlineCanMove=true;}teamTurnMessage='';$('ptree').style.display=(m==='online'&&partyState&&partyState.mode==='tournament')?'':'none';$('bd').classList.remove('ffa');$('bd').style.width='100%';$('bd').style.minWidth='';$('bd').style.gridTemplateColumns='';$('bd').style.gridTemplateRows='';$('bd').parentElement.classList.remove('ffa-board-wrap');$('bd').parentElement.style.maxWidth='';$('bd').parentElement.style.margin='';$('bd').parentElement.style.overflowX='';$('un').style.display='';$('fl').style.display='';$('pt').style.display='';$('pb').style.display='';$('pmr').style.display='';vs=m!='friends';if(m=='online')netLook();else BL={th:{...th},col:{...col},ef:{...ef}};sent=0;pm=[];sentB=0;glv=lvl;
+tournamentResultPending=false;deferredTournamentGameStart=null;$('gm').classList.remove('ffa-active');$('ffa-panel')?.remove();$('ffa-board-heading')?.remove();$('st').className='';mode=m;if(m!=='online'){onlineSpectator=false;onlineCanMove=true;}teamTurnMessage='';$('ptree').style.display=(m==='online'&&partyState&&partyState.mode==='tournament')?'':'none';$('bd').classList.remove('ffa');$('bd').style.width='100%';$('bd').style.minWidth='';$('bd').style.gridTemplateColumns='';$('bd').style.gridTemplateRows='';$('bd').parentElement.classList.remove('ffa-board-wrap');$('bd').parentElement.style.maxWidth='';$('bd').parentElement.style.margin='';$('bd').parentElement.style.overflowX='';$('bd').parentElement.style.overflow='';$('un').style.display='';$('fl').style.display='';$('pt').style.display='';$('pb').style.display='';$('pmr').style.display='';vs=m!='friends';if(m=='online')netLook();else BL={th:{...th},col:{...col},ef:{...ef}};sent=0;pm=[];sentB=0;glv=lvl;
 if(m=='bot')opp={n:'Bot Stufe '+(lvl+1),e:LV[lvl].e};
 bl=m=='online'?lvOf(opp.e):lvl;
 S=init();H=[];sel=-1;tg=[];pend=null;busy=false;to=null;netClock=null;rd=false;rq=0;flip=m=='online'&&onlineSide=='b';tc=m=='online'?gtc:ntc;ck={w:tc*6e4,b:tc*6e4};ar=[];pf=-1;pen=null;rv();lt=Date.now();
@@ -593,41 +657,106 @@ mo=false;started=true;show();intro()}
 
 function startFFA(d){
  ffaState=d;ffaSel=-1;ffaScale=1;mode='ffa';vs=false;started=true;mo=false;tc=0;to=null;I={};H=[];sel=-1;tg=[];pm=[];ar=[];rv();
- $('bd').classList.add('ffa');$('bd').parentElement.classList.add('ffa-board-wrap');
- $('bd').parentElement.style.maxWidth='460px';$('bd').parentElement.style.width='100%';$('bd').parentElement.style.margin='0 auto';$('bd').parentElement.style.overflow='hidden';
+ $('gm').classList.add('ffa-active');$('bd').classList.add('ffa');$('bd').parentElement.classList.add('ffa-board-wrap');
+ if(!$('ffa-board-heading'))$('bd').parentElement.insertAdjacentHTML('beforebegin','<div id="ffa-board-heading" class="ffa-board-heading"><div><strong>ALLE GEGEN ALLE</strong><small>Vierseitiges Schach · 16 Figuren je Spieler</small></div><span class="ffa-board-size">'+(d.players||[]).length+' Spieler</span></div>');
+ $('bd').parentElement.style.maxWidth='';$('bd').parentElement.style.width='100%';$('bd').parentElement.style.margin='8px auto 12px';$('bd').parentElement.style.overflow='auto';
+ if(!$('ffa-panel'))$('bd').parentElement.insertAdjacentHTML('afterend','<section id="ffa-panel" aria-live="polite"></section>');
  show();drawFFA();
+}
+function ffaLocalPathClear(f,fx,fy,tx,ty){
+ const dx=Math.sign(tx-fx),dy=Math.sign(ty-fy);let x=fx+dx,y=fy+dy;
+ while(x!==tx||y!==ty){const at=y*f.size+x;if((f.cells&&!f.cells[at])||f.board[at])return false;x+=dx;y+=dy;}
+ return true;
+}
+function ffaLocalLegal(f,key,from,to){
+ const n=f.size,board=f.board;if(!Number.isInteger(from)||!Number.isInteger(to)||from<0||to>=n*n||from===to)return false;
+ if(f.cells&&(!f.cells[from]||!f.cells[to]))return false;
+ const piece=board[from],target=board[to],pl=(f.players||[]).find(x=>x.key===key);
+ if(!piece||piece.owner!==key||target&&(target.owner===key||((f.players||[]).find(x=>x.key===target.owner)?.teamId===pl?.teamId)))return false;
+ const fx=from%n,fy=Math.floor(from/n),tx=to%n,ty=Math.floor(to/n),dx=tx-fx,dy=ty-fy,ax=Math.abs(dx),ay=Math.abs(dy),t=piece.type;
+ if(t==='N')return(ax===1&&ay===2)||(ax===2&&ay===1);
+ if(t==='K')return Math.max(ax,ay)===1;
+ if(t==='P'){if(!pl)return false;const vx=pl.forward.x,vy=pl.forward.y;if(!target)return dx===vx&&dy===vy;const px=-vy,py=vx;return(dx===vx+px&&dy===vy+py)||(dx===vx-px&&dy===vy-py)}
+ const straight=dx===0||dy===0,diag=ax===ay;if((t==='R'&&!straight)||(t==='B'&&!diag)||(t==='Q'&&!straight&&!diag))return false;
+ return ffaLocalPathClear(f,fx,fy,tx,ty);
+}
+function ffaBlockCell(f,pl,x,y){
+ const d=f.depth,inner=(x>=d&&x<d+8),vertical=(y>=d&&y<d+8),outer=pl.sideSlot*2;
+ if(pl.side==='top')return inner&&(y===outer||y===outer+1);
+ if(pl.side==='bottom')return inner&&(y===f.size-1-outer||y===f.size-2-outer);
+ if(pl.side==='left')return vertical&&(x===outer||x===outer+1);
+ return vertical&&(x===f.size-1-outer||x===f.size-2-outer);
+}
+function ffaPieceSvg(type,color,index){
+ const grad='ffaGrad'+index,shine='ffaShine'+index;
+ const base='<path d="M5 68 Q5 64 12 62 L17 59 Q32 56 47 59 L52 62 Q59 64 59 68 L58 72 Q32 77 6 72Z"/><path d="M8 67 Q32 70 56 67" fill="none" stroke="rgba(255,255,255,.64)" stroke-width="2.2" stroke-linecap="round"/><path d="M11 63 Q32 59 53 63" fill="none" stroke="rgba(0,0,0,.18)" stroke-width="1.2"/><path d="M15 60 Q32 56 49 60" fill="none" stroke="rgba(255,255,255,.26)" stroke-width="1"/>';
+ const pieces={
+  P:'<path d="M17 62 L20 51 Q22 44 27 41 L37 41 Q42 45 44 51 L47 62Z"/><path d="M23 43 Q20 37 22 33 Q24 29 27 27 L37 27 Q42 31 42 36 Q42 40 39 43Z"/><circle cx="32" cy="21" r="12.5"/><ellipse cx="27.5" cy="16.5" rx="3.2" ry="5" fill="rgba(255,255,255,.36)"/><path d="M22 31 Q32 35 42 31" fill="none" stroke="rgba(255,255,255,.50)" stroke-width="1.7"/>',
+  R:'<path d="M14 62 L17 34 Q18 30 23 29 L41 29 Q46 30 47 34 L50 62Z"/><path d="M11 31 L11 15 L20 15 L20 22 L27 22 L27 10 L37 10 L37 22 L44 22 L44 15 L53 15 L53 31Z"/><path d="M22 35 L21 57" stroke="rgba(255,255,255,.48)" stroke-width="2.2" stroke-linecap="round"/><path d="M17 33 H47" stroke="rgba(0,0,0,.25)" stroke-width="2"/>',
+  N:'<path d="M15 62 Q18 55 15 49 Q11 39 18 32 Q22 27 27 26 Q25 20 28 11 Q35 16 39 23 Q49 25 52 35 Q55 44 47 53 L49 62Z"/><path d="M27 29 Q34 34 47 29 Q44 40 34 44 Q26 47 23 56" fill="none" stroke="rgba(255,255,255,.50)" stroke-width="2.2" stroke-linecap="round"/><path d="M25 13 L30 24 L37 26" fill="none" stroke="rgba(0,0,0,.28)" stroke-width="2.5" stroke-linecap="round"/><circle cx="40" cy="27" r="2.4" fill="#fff"/><circle cx="40" cy="27" r=".9" fill="#28323a"/><path d="M46 34 L53 36 L45 40" fill="rgba(0,0,0,.10)" stroke="rgba(0,0,0,.32)" stroke-width="1"/>',
+  B:'<path d="M16 62 L20 50 Q22 44 27 40 Q20 34 22 25 Q24 13 32 8 Q40 13 42 25 Q44 34 37 40 Q42 45 44 50 L48 62Z"/><path d="M26 22 Q32 28 38 22 L37 32 Q32 37 27 32Z" fill="rgba(255,255,255,.23)"/><path d="M27 18 L38 37" stroke="rgba(0,0,0,.32)" stroke-width="3.2" stroke-linecap="round"/><path d="M28 17 L38 34" stroke="rgba(255,255,255,.78)" stroke-width="1.4" stroke-linecap="round"/><circle cx="32" cy="8" r="2.2" fill="rgba(255,255,255,.8)"/>',
+  Q:'<path d="M15 62 L19 49 Q23 40 22 34 L16 27 L25 31 L28 17 L32 28 L36 17 L39 31 L48 27 L42 35 Q41 42 45 49 L49 62Z"/><circle cx="16" cy="23" r="4.4"/><circle cx="27" cy="15" r="4.2"/><circle cx="37" cy="15" r="4.2"/><circle cx="48" cy="23" r="4.4"/><path d="M22 41 Q32 46 42 41" fill="none" stroke="rgba(255,255,255,.48)" stroke-width="2"/>',
+  K:'<path d="M15 62 L19 49 Q23 42 22 36 L16 31 L26 28 L26 20 L38 20 L38 28 L48 31 L42 36 Q41 43 45 49 L49 62Z"/><path d="M32 5 V25 M23 14 H41" stroke="rgba(0,0,0,.35)" stroke-width="7" stroke-linecap="round"/><path d="M32 5 V25 M23 14 H41" stroke="rgba(255,255,255,.88)" stroke-width="3.2" stroke-linecap="round"/><path d="M23 43 Q32 48 41 43" fill="none" stroke="rgba(255,255,255,.48)" stroke-width="2"/>'
+ };
+ const label={K:'König',Q:'Dame',R:'Turm',B:'Läufer',N:'Springer',P:'Bauer'}[type]||'Schachfigur';
+ return '<svg class="ffa-piece-svg" viewBox="0 0 64 76" preserveAspectRatio="none" role="img" aria-label="'+label+'" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="'+grad+'" x1="0" y1="0" x2="1" y2=".15"><stop offset="0" stop-color="#fff" stop-opacity=".78"/><stop offset=".12" stop-color="'+color+'"/><stop offset=".34" stop-color="'+color+'"/><stop offset=".72" stop-color="'+color+'"/><stop offset="1" stop-color="#101820" stop-opacity=".58"/></linearGradient><radialGradient id="'+shine+'" cx=".22" cy=".12" r=".8"><stop offset="0" stop-color="#fff" stop-opacity=".42"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs><g fill="url(#'+grad+')" stroke="rgba(20,24,28,.27)" stroke-width=".9" stroke-linejoin="round"> '+base+pieces[type]+'<path d="M17 61 Q32 66 47 61" fill="none" stroke="rgba(255,255,255,.62)" stroke-width="1.4" stroke-linecap="round"/><path d="M19 34 Q21 27 26 25" fill="none" stroke="rgba(255,255,255,.50)" stroke-width="1.5" stroke-linecap="round"/><path d="M12 65 Q18 63 22 62" fill="none" stroke="rgba(255,255,255,.42)" stroke-width="1.2" stroke-linecap="round"/></g><ellipse cx="24" cy="16" rx="7" ry="4" fill="url(#'+shine+')" pointer-events="none"/></svg>';
 }
 function drawFFA(){
  if(!ffaState)return;
- const f=ffaState,n=f.size,colors=Object.fromEntries((f.players||[]).map(x=>[x.key,x.color]));
- const glyph={K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟'};
- const depth=Number.isFinite(f.depth)?f.depth:Math.max(2,Math.floor((n-10)/2));
+ const f=ffaState,n=f.size,players=f.players||[],colors=Object.fromEntries(players.map(x=>[x.key,x.color]));
+ const pieceNames={K:'König',Q:'Dame',R:'Turm',B:'Läufer',N:'Springer',P:'Bauer'};
+ const depth=Number.isFinite(f.depth)?f.depth:Math.max(2,Math.floor((n-8)/2));
+ const current=players.find(x=>x.key===f.turnKey),myKey=(AU&&AU.name||'').toLowerCase(),myTurn=!!current&&current.key===myKey&&!f.winner;
+ const alive=new Set(f.alive||[]);
+ const selectedPiece=ffaSel>=0?f.board[ffaSel]:null;
+ const legalTargets=[];
+ if(selectedPiece&&selectedPiece.owner===myKey&&myTurn)for(let i=0;i<f.board.length;i++)if(ffaLocalLegal(f,myKey,ffaSel,i))legalTargets.push(i);
+ const legalSet=new Set(legalTargets);
+ const lastFrom=f.lastMove&&Number.isInteger(f.lastMove.from)?f.lastMove.from:-1,lastTo=f.lastMove&&Number.isInteger(f.lastMove.to)?f.lastMove.to:-1;
  $('bd').className='ffa';$('bd').style.gridTemplateColumns='repeat('+n+',minmax(0,1fr))';$('bd').style.gridTemplateRows='repeat('+n+',minmax(0,1fr))';$('bd').style.width=(ffaScale*100)+'%';$('bd').style.minWidth='0';
- $('bd').parentElement.classList.add('ffa-board-wrap');$('bd').parentElement.style.maxWidth='460px';$('bd').parentElement.style.width='100%';$('bd').parentElement.style.margin='0 auto';$('bd').parentElement.style.overflow=ffaScale>1?'auto':'hidden';
- const ffaCell=(($('bd').parentElement.clientWidth||460)-16)*ffaScale/n;$('bd').style.setProperty('--ffa-piece-size',Math.max(8,Math.min(23,ffaCell*.72))+'px');
- $('bd').innerHTML=(f.board||[]).map((p,i)=>{
+ $('bd').parentElement.classList.add('ffa-board-wrap');$('bd').parentElement.style.maxWidth='';$('bd').parentElement.style.width='100%';$('bd').parentElement.style.margin='8px auto 12px';$('bd').parentElement.style.overflow=ffaScale>1?'auto':'hidden';
+ const wrapWidth=$('bd').parentElement.clientWidth||360,cell=((wrapWidth-16)*ffaScale)/n;
+ $('bd').style.setProperty('--ffa-piece-size',Math.max(9,Math.min(34,cell*.82))+'px');
+ $('bd').innerHTML=(f.board||[]).map((piece,i)=>{
    const x=i%n,y=Math.floor(i/n),playable=!f.cells||!!f.cells[i];
    if(!playable)return '<div class="fq offboard" aria-hidden="true"></div>';
-   const center=!f.cells||(x>=depth&&x<depth+10&&y>=depth&&y<depth+10);
-   const shade=center?(((x-depth+y-depth)&1)?'dark':'light'):'pad';
-   return '<div class="fq '+shade+(ffaSel===i?' selected':'')+'" data-fi="'+i+'" aria-label="Feld '+(x+1)+', '+(y+1)+'">'+(p?'<span class="fp" style="color:'+colors[p.owner]+'">'+(glyph[p.type]||'')+'</span>':'')+'</div>';
+   const shade=((x+y)&1)?'dark':'light',activeStart=current&&ffaBlockCell(f,current,x,y);
+   const selected=ffaSel===i,target=legalSet.has(i),capture=target&&!!piece,lastStart=i===lastFrom,lastEnd=i===lastTo;
+   const label='Feld '+(x+1)+', '+(y+1)+(piece?' · '+pieceNames[piece.type]+' von '+(players.find(z=>z.key===piece.owner)?.name||piece.owner):'');
+   return '<div class="fq '+shade+(selected?' selected':'')+(activeStart?' ffa-active-start':'')+(target?' ffa-target':'')+(capture?' ffa-capture':'')+(lastStart?' ffa-last-from':'')+(lastEnd?' ffa-last-to':'')+'" data-fi="'+i+'" aria-label="'+esc(label)+'" title="'+esc(label)+'">'+(piece?ffaPieceSvg(piece.type,colors[piece.owner]||'#888888',i):'')+'</div>';
  }).join('');
- const current=(f.players||[]).find(x=>x.key===f.turnKey),alive=(f.players||[]).filter(x=>f.alive.includes(x.key)),out=(f.players||[]).filter(x=>!f.alive.includes(x.key));
- const order=(f.order||[]).map(k=>{const pl=(f.players||[]).find(x=>x.key===k);return pl?'<span class="'+(k===f.turnKey?'active':'')+' '+(!f.alive.includes(k)?'out':'')+'">'+esc(pl.name)+(pl.connected===false?' · offline':'')+'</span>':''}).filter(Boolean).join(' → ');
- $('st').className=f.winner?'fin':'';
- $('st').innerHTML='<div>'+(f.winner?'🏆 '+esc((f.players||[]).find(x=>x.key===f.winner)?.teamName||(f.players||[]).find(x=>x.key===f.winner)?.name||'Sieger')+' gewinnt!':(f.winnerTeam?'🏆 Allianz gewinnt':'Zug '+(f.moves+1)+' · '+(current?'Am Zug: <b>'+esc(current.name)+'</b>':'Warte auf Zug')))+'</div><div class="ffa-meta">'+alive.map(x=>'<span class="ffa-chip"><i style="width:9px;height:9px;border-radius:50%;background:'+x.color+'"></i>'+esc(x.name)+(x.teamId&&x.teamId.startsWith('team-')?' · '+esc(x.teamName):'')+(x.connected===false?' · offline':'')+'</span>').join('')+out.map(x=>'<span class="ffa-chip out">'+esc(x.name)+' · ausgeschieden</span>').join('')+'</div><div class="ffa-order"><b>Zugreihenfolge:</b> '+order+'</div><div class="ffa-tools"><button class="pn" data-ffa-zoom="out" aria-label="Verkleinern">−</button><span class="party-hint">'+Math.round(ffaScale*100)+'%</span><button class="pn" data-ffa-zoom="in" aria-label="Vergrößern">+</button><button class="pn" data-ffa-zoom="fit">Einpassen</button></div><div class="u">'+(f.winner?'Spiel beendet':'Tippe deine Figur und danach das Zielfeld an. König geschlagen = Spieler scheidet aus.')+'</div>';
- $('ct').innerHTML='';$('cb').innerHTML='';
- $('pt').style.display='none';$('pb').style.display='none';$('er').style.display='none';$('pmr').style.display='none';$('pq').style.display='none';$('un').style.display='none';$('fl').style.display='none';
+ const sideLabel={top:'Gelb · oben',right:'Grün · rechts',bottom:'Blau · unten',left:'Rot · links'};
+ const aliveOrder=(f.order||[]).filter(k=>alive.has(k));
+ const turnPosition=current?Math.max(0,aliveOrder.indexOf(current.key))+1:0;
+ const nextIndex=(f.order||[]).length?((Number.isInteger(f.turn)?f.turn:0)+1)%(f.order||[]).length:0;
+ let nextPlayer=null;for(let step=0;step<(f.order||[]).length;step++){const k=f.order[(nextIndex+step)%(f.order.length||1)],candidate=players.find(x=>x.key===k);if(candidate&&alive.has(k)&&candidate.connected!==false){nextPlayer=candidate;break}}
+ const badgeText=f.winner?'BEENDET':myTurn?'DEIN ZUG':current?'BITTE WARTEN':'ZUSCHAUEN';
+ const banner=f.winner?'<div class="ffa-turn-main"><span class="ffa-turn-dot" style="background:'+(current?.color||'#eab308')+'"></span><div class="ffa-turn-copy"><strong>Spiel beendet</strong><small>🏆 '+esc((players.find(x=>x.key===f.winner)?.teamName)||(players.find(x=>x.key===f.winner)?.name)||'Sieger')+' gewinnt</small></div></div>':'<div class="ffa-turn-main"><span class="ffa-turn-dot" style="background:'+(current?.color||'#999')+'"></span><div class="ffa-turn-copy"><strong>'+(current?esc(current.name)+' ist am Zug':'Warte auf den nächsten Spieler')+'</strong><small>'+(current?sideLabel[current.side]+' · '+(myTurn?'Du bist jetzt dran':current.connected===false?'Verbindung unterbrochen':'Du bist nicht am Zug'):'')+'</small></div></div>';
+ $('st').className='ffa-st';
+ $('st').innerHTML='<div class="ffa-topline"><div class="ffa-turn-number"><small>ZUG-NUMMER</small><strong>'+((f.moves||0)+1)+'</strong><em>'+(turnPosition?('Spieler '+turnPosition+' / '+aliveOrder.length):'—')+'</em></div>'+banner+'<span class="ffa-turn-badge '+(f.winner?'done':myTurn?'mine':'')+'">'+badgeText+'</span></div>';
+ const playerCards=players.map(pl=>{
+   const active=!!current&&pl.key===current.key,aliveNow=alive.has(pl.key),remaining=(f.board||[]).filter(x=>x&&x.owner===pl.key).length;
+   return '<div class="ffa-player-card'+(active?' active':'')+(!aliveNow?' out':'')+'"><span class="ffa-player-dot" style="background:'+pl.color+'"></span><span class="ffa-player-info"><strong>'+esc(pl.name)+'</strong><small>'+sideLabel[pl.side]+' · '+(aliveNow?(pl.connected===false?'Offline':'Im Spiel'):'Ausgeschieden')+'</small></span><span class="ffa-player-count">'+remaining+'/16</span></div>';
+ }).join('');
+ const order=(f.order||[]).map((k,i)=>{const pl=players.find(x=>x.key===k);if(!pl)return '';return '<span class="ffa-order-step'+(k===f.turnKey?' active':'')+(!alive.has(k)?' out':'')+'"><b>'+(i+1)+'.</b><i class="ffa-player-dot" style="width:7px;height:7px;background:'+pl.color+'"></i>'+esc(pl.name)+'</span>'}).join('');
+ const selectedHint=selectedPiece?pieceNames[selectedPiece.type]+' ausgewählt · '+legalTargets.length+' legale Zielfelder gelb markiert.':'Tippe zuerst eine deiner Figuren an. Gelbe Punkte zeigen legale Züge, rote Ringe mögliche Schlagzüge.';
+ const instruction=f.winner?'Die Partie ist beendet.':myTurn?(selectedPiece?selectedHint:'Du bist am Zug. Deine Startreihe ist gelb umrandet.'):(current?('Warte auf '+current.name+'. Der gelb markierte Startbereich zeigt die aktive Seite.'):'Du schaust zu.');
+ const coordinate=i=>i<0?'—':String.fromCharCode(65+(i%n))+(n-Math.floor(i/n));
+ const lastPlayer=f.lastMove&&players.find(x=>x.key===f.lastMove.by);
+ const lastMoveLine=f.lastMove?'<div class="ffa-last-move">Letzter Zug: <b>'+esc(lastPlayer&&lastPlayer.name||'Spieler')+'</b> · '+coordinate(lastFrom)+' → '+coordinate(lastTo)+'</div>':'<div class="ffa-last-move">Noch kein Zug gespielt. <b>'+((f.moves||0)+1)+'. Zug</b> ist an der Reihe.</div>';
+ $('ffa-panel').innerHTML='<div class="ffa-panel-head"><div><strong>Spielübersicht</strong><small>'+players.length+' Spieler · 16 Figuren je Spieler (8 Grundfiguren + 8 Bauern) · '+(f.moves||0)+' ausgeführte Züge</small></div><div class="ffa-tools"><button class="pn" data-ffa-zoom="out" aria-label="Verkleinern">−</button><button class="pn mbn" data-ffa-zoom="fit">Einpassen</button><button class="pn" data-ffa-zoom="in" aria-label="Vergrößern">+</button></div></div><div class="ffa-player-grid">'+playerCards+'</div><div class="ffa-order-title">Zugreihenfolge</div><div class="ffa-order">'+order+'</div>'+lastMoveLine+'<div class="ffa-figure-legend"><span>♜ Turm</span><span>♞ Springer</span><span>♝ Läufer</span><span>♛ Dame</span><span>♚ König</span><span>♟ Bauer</span></div><div class="ffa-help">'+instruction+(nextPlayer&&!f.winner?' Danach: <b>'+esc(nextPlayer.name)+'</b>.':'')+'</div></div>';
+ $('ct').innerHTML='';$('cb').innerHTML='';$('pt').style.display='none';$('pb').style.display='none';$('er').style.display='none';$('pmr').style.display='none';$('pq').style.display='none';$('un').style.display='none';$('fl').style.display='none';
 }
 function ffaClick(i){
  if(!ffaState||ffaState.winner)return;
  const key=(AU&&AU.name||'').toLowerCase(),current=ffaState.turnKey;
- if(current!==key){toast('Du bist noch nicht an der Reihe.');return}
+ if(current!==key){toast(current?'Warte auf '+((ffaState.players||[]).find(x=>x.key===current)?.name||'den nächsten Spieler')+'.':'Du bist gerade Zuschauer.');return}
  const cell=ffaState.board[i];
  if(ffaSel<0){if(cell&&cell.owner===key){ffaSel=i;drawFFA()}return}
  if(i===ffaSel){ffaSel=-1;drawFFA();return}
+ if(ffaLocalLegal(ffaState,key,ffaSel,i)){socket?.emit('ffa:move',{from:ffaSel,to:i});ffaSel=-1;drawFFA();return}
  if(cell&&cell.owner===key){ffaSel=i;drawFFA();return}
- socket?.emit('ffa:move',{from:ffaSel,to:i});ffaSel=-1;drawFFA();
+ ffaSel=-1;drawFFA();
 }
 
 const myLk=()=>({t:th[onlineSide],c:col[onlineSide],x:ef[onlineSide]});
@@ -831,7 +960,7 @@ if(a=='fdel'){if(socket?.connected)socket.emit('friend:del',{name:d.n});return}
 if(a=='install'&&ip){ip.prompt();ip=null;menu()}
 if(a=='back'){mo=false;show();ai()}};
 $('ptree').onclick=()=>{if(partyState&&partyState.mode==='tournament'){mo=true;scr='lobby';show();}};
-$('st').onclick=e=>{const z=e.target.closest('[data-ffa-zoom]');if(!z||mode!=='ffa')return;const v=z.dataset.ffaZoom;ffaScale=v==='in'?Math.min(1.4,+(ffaScale+.15).toFixed(2)):v==='out'?Math.max(1,+(ffaScale-.15).toFixed(2)):1;drawFFA();};
+$('gm').addEventListener('click',e=>{const z=e.target.closest('[data-ffa-zoom]');if(!z||mode!=='ffa')return;const v=z.dataset.ffaZoom;ffaScale=v==='in'?Math.min(1.6,+(ffaScale+.15).toFixed(2)):v==='out'?Math.max(1,+(ffaScale-.15).toFixed(2)):1;drawFFA();});
 setInterval(()=>{const el=$('tournamentCountdown'),tr=partyState&&partyState.tournament;if(el&&tr&&tr.nextRoundAt)el.textContent='Nächste Runde startet in '+Math.max(0,Math.ceil((tr.nextRoundAt-Date.now())/1000))+' Sekunden';},250);
 $('un').onclick=()=>{pm=[];
 if(mode=='online'){
