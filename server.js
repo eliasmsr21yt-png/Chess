@@ -36,6 +36,7 @@ const code6 = () => { let c; do { c = String(100000 + Math.floor(Math.random() *
 
 // ---- Erweiterte Mehrspieler-Partys und Spielmodi ----
 const parties = new Map();
+const tournamentTimers = new Map();
 const PARTY_MODES = ['normal', 'tournament', 'ffa', 'team'];
 const PARTY_MAX = 16;
 const startBoard = () => ('rnbqkbnrpppppppp' + ' '.repeat(32) + 'PPPPPPPPRNBQKBNR').split('').map(x => x === ' ' ? '' : x);
@@ -47,15 +48,20 @@ let partySaveTimer = null;
 const partySafe = p => ({
   code: p.code, host: p.host, mode: p.mode, tc: p.tc, status: p.status,
   players: (p.players || []).map(x => ({ key:x.key, name:x.name, elo:x.elo, av:x.av, connected:!!x.connected, currentGame:x.currentGame || null })),
-  pairings: p.pairings || [], tournamentPlayers:p.tournamentPlayers ?? null, teams: p.teams || { w:[], b:[], names:{w:'Team Weiß',b:'Team Schwarz'}, colors:{w:'#f5f5f5',b:'#252a34'} },
+  pairings: p.pairings || [], tournamentPlayers:p.tournamentPlayers ?? null,
+  tournamentPreview:p.tournamentPreview || null,
+  teams: p.teams || { w:[], b:[], names:{w:'Team Weiß',b:'Team Schwarz'}, colors:{w:'#f5f5f5',b:'#252a34'} },
+  ffaTeams:p.ffaTeams || {},
   games: (p.games || []).map(g => ({
-    code:g.code, kind:g.kind, party:g.party, status:g.status, round:g.round, matchNo:g.matchNo,
+    code:g.code, kind:g.kind, bracket:g.bracket || null, party:g.party, status:g.status, round:g.round, matchNo:g.matchNo,
     whiteKeys:g.whiteKeys || [], blackKeys:g.blackKeys || [], teamIndex:g.teamIndex || {w:0,b:0},
     board:g.board || startBoard(), turn:g.turn || 'w', castling:g.castling || 'KQkq', ep:g.ep ?? -1, halfmove:g.halfmove || 0,
-    history:g.history || [], positions:g.positions || {}, moves:g.moves || 0, tc:g.tc || 0, clock:g.clock ? {remaining:g.clock.remaining,turn:g.clock.turn,lastAt:g.clock.lastAt,ended:g.clock.ended} : null,
+    history:g.history || [], positions:g.positions || {}, moves:g.moves || 0, tc:g.tc || 0, createdAt:g.createdAt || Date.now(), timeStats:g.timeStats || null,
+    clock:g.clock ? {remaining:g.clock.remaining,turn:g.clock.turn,lastAt:g.clock.lastAt,ended:g.clock.ended} : null,
     winner:g.winner || null, result:g.result || null
   })),
-  tournament:p.tournament || null, ffa:p.ffa || null, createdAt:p.createdAt || Date.now()
+  tournament:p.tournament ? {rounds:p.tournament.rounds || [],champion:p.tournament.champion || null,runnerUp:p.tournament.runnerUp || null,finished:!!p.tournament.finished,phase:p.tournament.phase || 'playing',nextRoundAt:p.tournament.nextRoundAt || null,lowerBracket:p.tournament.lowerBracket || {rounds:[],waiting:[],placements:[],champion:null}} : null,
+  ffa:p.ffa || null, createdAt:p.createdAt || Date.now()
 });
 async function flushParties() {
   clearTimeout(partySaveTimer);
@@ -79,13 +85,14 @@ async function loadParties() {
   } catch (e) { console.error('Partys konnten nicht geladen werden:', e.message); }
   for (const raw of Array.isArray(rows) ? rows : []) {
     if (!raw || !/^\d{6}$/.test(raw.code) || !Array.isArray(raw.players)) continue;
-    const p = { ...raw, players:raw.players.map(x=>({...x, socketId:null, connected:false})), games:raw.games || [], teams:raw.teams || {w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'}} };
+    const p = { ...raw, players:raw.players.map(x=>({...x, socketId:null, connected:false})), games:raw.games || [], teams:raw.teams || {w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'}}, ffaTeams:raw.ffaTeams || {} };
     p.games = p.games.map(g => ({...g, party:p.code, w:null, b:null, positions:g.positions||{[chPositionKey(g)]:1}, clock:g.clock ? {...g.clock,timer:null} : null}));
     parties.set(p.code,p);
     for (const g of p.games) if (g.status !== 'done' && g.kind !== 'ffa') {
       rooms.set(g.code,g);
       if(g.clock && !g.clock.ended) scheduleClock(g);
     }
+    if (p.tournament && p.tournament.phase === 'intermission' && p.tournament.nextRoundAt) scheduleTournamentAdvance(p);
   }
 }
 function partyPlayer(p, key) { return p.players.find(x => x.key === key); }
@@ -108,6 +115,9 @@ function renamePartyMember(oldKey,newKey,newName) {
         match.white=replace(match.white);match.black=replace(match.black);match.winner=replace(match.winner);
       }
     }
+    if(p.ffaTeams&&p.ffaTeams[oldKey]){p.ffaTeams[newKey]=p.ffaTeams[oldKey];delete p.ffaTeams[oldKey];}
+    if(p.tournamentPreview){p.tournamentPreview.players=(p.tournamentPreview.players||[]).map(replace);p.tournamentPreview.shuffled=(p.tournamentPreview.shuffled||[]).map(replace);for(const r of p.tournamentPreview.rounds||[])for(const m of r.matches||[]){m.white=replace(m.white);m.black=replace(m.black);m.winner=replace(m.winner);}}
+    if(p.tournament&&p.tournament.lowerBracket){const lb=p.tournament.lowerBracket;lb.waiting=(lb.waiting||[]).map(replace);lb.placements=(lb.placements||[]).map(x=>({...x,key:replace(x.key)}));lb.champion=replace(lb.champion);for(const r of lb.rounds||[])for(const m of r.matches||[]){m.white=replace(m.white);m.black=replace(m.black);m.winner=replace(m.winner);m.loser=replace(m.loser);}}
     if(p.ffa) {
       p.ffa.players=(p.ffa.players||[]).map(x=>x.key===oldKey?{...x,key:newKey,name:newName}:x);
       p.ffa.order=(p.ffa.order||[]).map(replace);p.ffa.alive=(p.ffa.alive||[]).map(replace);
@@ -123,9 +133,10 @@ function partySnapshot(p) {
   return {
     code:p.code, host:p.host, isHost:false, mode:p.mode, tc:p.tc, status:p.status,
     players:p.players.map(x=>({key:x.key,name:x.name,elo:x.elo,av:x.av,connected:!!x.connected,currentGame:x.currentGame||null,isHost:x.key===p.host})),
-    pairings:p.pairings || [], tournamentPlayers:p.tournamentPlayers ?? null, teams:p.teams || {w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'},colors:{w:'#f5f5f5',b:'#252a34'}},
-    games:(p.games||[]).map(g=>({code:g.code,kind:g.kind,round:g.round,matchNo:g.matchNo,status:g.status,white:(g.whiteKeys||[]).map(k=>partyPlayer(p,k)?.name||k),black:(g.blackKeys||[]).map(k=>partyPlayer(p,k)?.name||k),winner:g.winner ? (partyPlayer(p,g.winner.key)?.name||g.winner.key) : null,result:g.result})),
-    tournament:p.tournament ? {rounds:p.tournament.rounds,champion:p.tournament.champion,finished:!!p.tournament.finished} : null,
+    pairings:p.pairings || [], tournamentPlayers:p.tournamentPlayers ?? null, tournamentPreview:p.tournamentPreview || null,
+    teams:p.teams || {w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'},colors:{w:'#f5f5f5',b:'#252a34'}}, ffaTeams:p.ffaTeams || {},
+    games:(p.games||[]).map(g=>({code:g.code,kind:g.kind,bracket:g.bracket||null,round:g.round,matchNo:g.matchNo,status:g.status,white:(g.whiteKeys||[]).map(k=>partyPlayer(p,k)?.name||k),black:(g.blackKeys||[]).map(k=>partyPlayer(p,k)?.name||k),whiteKeys:g.whiteKeys||[],blackKeys:g.blackKeys||[],winner:g.winner ? (partyPlayer(p,g.winner.key)?.name||g.winner.key) : null,result:g.result,times:g.timeStats||null})),
+    tournament:p.tournament ? {rounds:p.tournament.rounds,champion:p.tournament.champion,runnerUp:p.tournament.runnerUp||null,finished:!!p.tournament.finished,phase:p.tournament.phase||'playing',nextRoundAt:p.tournament.nextRoundAt||null,lowerBracket:p.tournament.lowerBracket||{rounds:[],waiting:[],placements:[],champion:null}} : null,
     ffa:p.ffa ? ffaPublic(p.ffa) : null
   };
 }
@@ -223,9 +234,9 @@ function partyTurnView(p,g) {
     b:(g.blackKeys||[]).length?g.blackKeys[(g.teamIndex&&g.teamIndex.b||0)%g.blackKeys.length]:''
   }};
 }
-function createPartyGame(p,whiteKeys,blackKeys,kind='normal',round=0,matchNo=0) {
+function createPartyGame(p,whiteKeys,blackKeys,kind='normal',round=0,matchNo=0,bracket=null) {
   const code=code6(),tc=ptime(p.tc);
-  const g={code,kind:kind==='team'?'team':'party-game',party:p.code,whiteKeys:[...whiteKeys],blackKeys:[...blackKeys],
+  const g={code,kind:kind==='team'?'team':'party-game',bracket:bracket||(kind==='tournament'?'main':null),party:p.code,whiteKeys:[...whiteKeys],blackKeys:[...blackKeys],
     w:null,b:null,teamIndex:{w:0,b:0},tc,turn:'w',board:startBoard(),castling:'KQkq',ep:-1,halfmove:0,history:[],moves:0,positions:{},
     status:'running',round,matchNo,winner:null,result:null,res:{},e:{},u:{},createdAt:Date.now()};
   g.positions[chPositionKey(g)]=1;
@@ -236,65 +247,156 @@ function buildTournamentBracket(keys) {
   const shuffled=[...keys];
   for(let i=shuffled.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[shuffled[i],shuffled[j]]=[shuffled[j],shuffled[i]];}
   const bracket=2**Math.ceil(Math.log2(shuffled.length)),byeCount=bracket-shuffled.length;
-  return {shuffled,byeKeys:shuffled.slice(0,byeCount),pairs:Array.from({length:(shuffled.length-byeCount)/2},(_,i)=>[shuffled[byeCount+i*2],shuffled[byeCount+i*2+1]])};
+  return {shuffled,byeKeys:shuffled.slice(0,byeCount),pairs:Array.from({length:(shuffled.length-byeCount)/2},(_,i)=>[shuffled[byeCount+i*2],shuffled[byeCount+i*2+1]]),bracket};
+}
+function buildTournamentPreview(keys) {
+  if(!Array.isArray(keys)||keys.length<2)return null;
+  const {shuffled,byeKeys,pairs,bracket}=buildTournamentBracket(keys);
+  const rounds=[];
+  const first=[...byeKeys.map(key=>({white:key,black:null,bye:true,status:'bye',winner:key})),...pairs.map(([white,black])=>({white,black,bye:false,status:'preview',winner:null}))];
+  rounds.push({number:1,matches:first});
+  let count=bracket/4,number=2;
+  while(count>=1){rounds.push({number,matches:Array.from({length:count},()=>({white:null,black:null,bye:false,status:'preview',winner:null}))});count=Math.floor(count/2);number++;}
+  return {players:[...keys],shuffled,bracket,rounds,createdAt:Date.now()};
 }
 function makeTournament(p) {
   const members=new Set(partyMemberKeys(p));
   const keys=(Array.isArray(p.tournamentPlayers)?p.tournamentPlayers.filter(k=>members.has(k)):partyMemberKeys(p));
   if(keys.length<2) return false;
-  const {byeKeys,pairs}=buildTournamentBracket(keys);
-  p.tournament={rounds:[],champion:null,finished:false};
+  let preview=p.tournamentPreview;
+  if(!preview||preview.players.length!==keys.length||preview.players.some(k=>!keys.includes(k))) preview=buildTournamentPreview(keys);
+  p.tournament={rounds:[],champion:null,runnerUp:null,finished:false,phase:'playing',nextRoundAt:null,
+    lowerBracket:{rounds:[],waiting:[],placements:[],champion:null}};
+  p.tournamentPreview=preview;p.tournamentPlayers=[...keys];
   const r={number:1,matches:[]};
-  byeKeys.forEach((key,i)=>r.matches.push({id:'bye-'+Date.now()+'-'+i,white:key,black:null,winner:key,bye:true,status:'done'}));
-  pairs.forEach((pair,i)=>{const g=createPartyGame(p,[pair[0]],[pair[1]],'tournament',1,i+1);r.matches.push({id:g.code,white:pair[0],black:pair[1],winner:null,bye:false,status:'running'});});
-  p.tournament.rounds.push(r);p.status='running';broadcastParty(p);return true;
+  for(const [i,m] of preview.rounds[0].matches.entries()) {
+    if(m.bye){r.matches.push({id:'bye-'+Date.now()+'-'+i,white:m.white,black:null,winner:m.white,loser:null,bye:true,status:'done',result:'Freilos'});}
+    else {const g=createPartyGame(p,[m.white],[m.black],'tournament',1,i+1,'main');r.matches.push({id:g.code,white:m.white,black:m.black,winner:null,loser:null,bye:false,status:'running'});}
+  }
+  p.tournament.rounds.push(r);p.status='running';p.tournamentPreview=null;broadcastParty(p);return true;
+}
+function lowerRoundRunning(p) {
+  return (p.games||[]).some(g=>g.bracket==='lower'&&g.status==='running');
+}
+function startLowerBracketRound(p) {
+  const t=p.tournament,lb=t&&t.lowerBracket;if(!lb||lowerRoundRunning(p))return;
+  lb.waiting=[...new Set(lb.waiting||[])];
+  if(lb.waiting.length<2) {
+    if(t.finished&&lb.waiting.length===1&&!lb.champion){lb.champion=lb.waiting[0];lb.placements.unshift({key:lb.champion,place:3});lb.waiting=[];}
+    return;
+  }
+  const entrants=lb.waiting.splice(0);
+  for(let i=entrants.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[entrants[i],entrants[j]]=[entrants[j],entrants[i]];}
+  const round={number:lb.rounds.length+1,matches:[]};
+  if(entrants.length%2){const key=entrants.shift();round.matches.push({id:'lower-bye-'+Date.now(),white:key,black:null,winner:key,loser:null,bye:true,status:'done',result:'Freilos'});lb.waiting.push(key);}
+  for(let i=0;i<entrants.length;i+=2){
+    const g=createPartyGame(p,[entrants[i]],[entrants[i+1]],'normal',round.number,round.matches.length+1,'lower');
+    round.matches.push({id:g.code,white:entrants[i],black:entrants[i+1],winner:null,loser:null,bye:false,status:'running'});
+  }
+  lb.rounds.push(round);
+}
+function enqueueLowerLosers(p,losers) {
+  const lb=p.tournament&&p.tournament.lowerBracket;if(!lb)return;
+  for(const key of losers||[])if(key&&!lb.waiting.includes(key)&&!lb.placements.some(x=>x.key===key)&&!lb.rounds.some(r=>r.matches.some(m=>m.white===key||m.black===key)))lb.waiting.push(key);
+  startLowerBracketRound(p);
+}
+function finishLowerMatch(p,g,winnerKey,loserKey) {
+  const lb=p.tournament&&p.tournament.lowerBracket;if(!lb)return;
+  const round=lb.rounds.find(r=>r.number===g.round),match=round&&round.matches.find(m=>m.id===g.code);
+  if(match){match.winner=winnerKey;match.loser=loserKey;match.status='done';match.result=g.result;match.times=g.timeStats||null;}
+  if(loserKey&&!lb.placements.some(x=>x.key===loserKey))lb.placements.push({key:loserKey,place:4+lb.placements.length});
+  if(winnerKey&&!lb.waiting.includes(winnerKey))lb.waiting.push(winnerKey);
+  if(!lowerRoundRunning(p))startLowerBracketRound(p);
+}
+function scheduleTournamentAdvance(p) {
+  const t=p&&p.tournament;if(!t||t.phase!=='intermission'||!t.nextRoundAt)return;
+  const old=tournamentTimers.get(p.code);if(old)clearTimeout(old);
+  const delay=Math.max(0,t.nextRoundAt-Date.now());
+  const timer=setTimeout(()=>{tournamentTimers.delete(p.code);launchTournamentNextRound(p);},delay);
+  if(timer.unref)timer.unref();tournamentTimers.set(p.code,timer);
+}
+function launchTournamentNextRound(p) {
+  const t=p&&p.tournament;if(!t||t.finished||t.phase!=='intermission')return;
+  if(t.nextRoundAt>Date.now())return scheduleTournamentAdvance(p);
+  const current=t.rounds[t.rounds.length-1],winners=(current&&current.matches||[]).map(m=>m.winner).filter(Boolean);
+  if(winners.length<=1){t.champion=winners[0]||t.champion;t.finished=true;t.phase='finished';t.nextRoundAt=null;startLowerBracketRound(p);p.status=lowerRoundRunning(p)?'running':'finished';broadcastParty(p);return;}
+  const next={number:current.number+1,matches:[]};
+  for(let i=0;i<winners.length;i+=2){
+    if(i+1>=winners.length){next.matches.push({id:'bye-'+Date.now()+'-'+i,white:winners[i],black:null,winner:winners[i],loser:null,bye:true,status:'done',result:'Freilos'});continue;}
+    const g=createPartyGame(p,[winners[i]],[winners[i+1]],'tournament',next.number,next.matches.length+1,'main');
+    next.matches.push({id:g.code,white:winners[i],black:winners[i+1],winner:null,loser:null,bye:false,status:'running'});
+  }
+  t.rounds.push(next);t.phase='playing';t.nextRoundAt=null;broadcastParty(p);
+  if(next.matches.every(m=>m.winner))advanceTournament(p);
 }
 function advanceTournament(p) {
-  const t=p.tournament;if(!t||t.finished)return;
+  const t=p.tournament;if(!t||t.phase==='finished')return;
   const current=t.rounds[t.rounds.length-1];
-  if(!current || current.matches.some(m=>!m.winner)) return;
-  const stillPresent=new Set(partyMemberKeys(p));
-  const winners=current.matches.map(m=>m.winner).filter(k=>k&&stillPresent.has(k));
-  if(winners.length===0){t.champion=null;t.finished=true;p.status='finished';broadcastParty(p);return;}
-  if(winners.length===1){t.champion=winners[0];t.finished=true;p.status='finished';broadcastParty(p);return;}
-  const next={number:current.number+1,matches:[]};
-  for(let i=0;i<winners.length;i+=2) {
-    if(i+1>=winners.length){next.matches.push({id:'bye-'+Date.now()+'-'+i,white:winners[i],black:null,winner:winners[i],bye:true,status:'done'});continue;}
-    const g=createPartyGame(p,[winners[i]],[winners[i+1]],'tournament',next.number,next.matches.length+1);
-    next.matches.push({id:g.code,white:winners[i],black:winners[i+1],winner:null,bye:false,status:'running'});
+  if(!current||current.matches.some(m=>!m.winner))return;
+  const winners=current.matches.map(m=>m.winner).filter(Boolean);
+  if(winners.length===0){t.champion=null;t.finished=true;t.phase='finished';p.status=lowerRoundRunning(p)?'running':'finished';broadcastParty(p);return;}
+  if(winners.length===1){
+    t.champion=winners[0];t.finished=true;t.phase='finished';t.nextRoundAt=null;
+    const finalMatch=current.matches.find(m=>!m.bye&&m.winner===t.champion);t.runnerUp=finalMatch&&finalMatch.loser||null;
+    // Der Finalverlierer ist Zweiter und spielt nicht mehr in der Trostrunde.
+    startLowerBracketRound(p);p.status=lowerRoundRunning(p)?'running':'finished';broadcastParty(p);return;
   }
-  t.rounds.push(next);broadcastParty(p);
-  if(next.matches.every(m=>m.winner))advanceTournament(p);
+  if(!current.lowerProcessed){current.lowerProcessed=true;enqueueLowerLosers(p,current.matches.filter(m=>!m.bye).map(m=>m.loser).filter(Boolean));}
+  t.phase='intermission';t.nextRoundAt=Date.now()+10000;p.status='running';scheduleTournamentAdvance(p);broadcastParty(p);
+}
+function partyGameTimeStats(g,now=Date.now()) {
+  const elapsedMs=Math.max(0,now-(g.createdAt||now));
+  if(!g.clock)return {whiteUsedMs:null,blackUsedMs:null,whiteRemainingMs:null,blackRemainingMs:null,elapsedMs};
+  const remaining=clockView(g,now).remaining,initial=(g.tc||0)*60000;
+  return {whiteUsedMs:Math.max(0,initial-remaining.w),blackUsedMs:Math.max(0,initial-remaining.b),whiteRemainingMs:remaining.w,blackRemainingMs:remaining.b,elapsedMs};
 }
 function finishPartyGame(g,winner,reason) {
   if(!g || g.status==='done') return;
-  g.status='done';g.result=reason||'beendet';g.winner=winner?{side:winner,key:(winner==='w'?g.whiteKeys:g.blackKeys)[0]}:null;
-  if(g.clock){g.clock.ended=true;clearTimeout(g.clock.timer);g.clock.timer=null;}
-  const p=parties.get(g.party);
-  if(!p)return;
+  const now=Date.now();g.timeStats=partyGameTimeStats(g,now);
+  g.status='done';g.result=reason||'beendet';
+  const winKey=winner?(winner==='w'?(g.whiteKeys||[])[0]:(g.blackKeys||[])[0]):null;
+  const loseKey=winner?(winner==='w'?(g.blackKeys||[])[0]:(g.whiteKeys||[])[0]):null;
+  g.winner=winKey?{side:winner,key:winKey}:null;
+  if(g.clock){g.clock.ended=true;g.clock.lastAt=now;clearTimeout(g.clock.timer);g.clock.timer=null;}
+  const p=parties.get(g.party);if(!p)return;
+
+  // Erst das Ergebnis des alten Spiels senden und den alten Raum schließen.
+  // Danach darf ein Spieler direkt in ein Trostrunden- oder Rematch-Spiel wechseln.
+  io.to(g.code).emit('game:finished',{code:g.code,bracket:g.bracket||null,winner,reason});
+  const roomIds=io.sockets.adapter&&io.sockets.adapter.rooms&&io.sockets.adapter.rooms.get(g.code);
+  for(const id of [...(roomIds||[])]) {
+    const x=sock(id);if(x&&x.data.room===g.code)x.data.room=null;if(x)x.leave(g.code);
+  }
   for(const k of [...(g.whiteKeys||[]),...(g.blackKeys||[])]) {
     const m=partyPlayer(p,k);if(m&&m.currentGame===g.code)m.currentGame=null;
     const x=m&&sock(m.socketId);if(x&&x.data.room===g.code)x.data.room=null;
   }
-  if(p.mode==='tournament' && p.tournament) {
-    const round=p.tournament.rounds.find(x=>x.number===g.round);
-    const match=round&&round.matches.find(x=>x.id===g.code);
-    if(match && !winner) {
-      const rematch=createPartyGame(p,[...(g.blackKeys||[])],[...(g.whiteKeys||[])],'tournament',g.round,g.matchNo);
-      match.id=rematch.code;match.white=rematch.whiteKeys[0];match.black=rematch.blackKeys[0];match.winner=null;match.status='running';match.result='Remis · Entscheidungsspiel';
-    } else if(match){match.winner=(winner==='w'?g.whiteKeys:g.blackKeys)[0];match.status='done';match.result=reason||'';}
-    advanceTournament(p);
-  } else if(!(p.games||[]).some(x=>x.status==='running')) p.status='lobby';
-  io.to(g.code).emit('game:finished',{winner,reason});
-  // Spielräume nach dem Ergebnis schließen, damit Clients bei der nächsten Partie
-  // keine alten Move-/Turn-Events aus einer vorherigen Partie empfangen.
-  const roomIds=io.sockets.adapter&&io.sockets.adapter.rooms&&io.sockets.adapter.rooms.get(g.code);
-  for(const id of [...(roomIds||[])]) {
-    const x=sock(id);
-    if(x&&x.data.room===g.code)x.data.room=null;
-    if(x)x.leave(g.code);
-  }
   rooms.delete(g.code);
+
+  if(p.mode==='tournament' && p.tournament) {
+    if(g.bracket==='lower') {
+      const lb=p.tournament.lowerBracket,round=lb&&lb.rounds.find(x=>x.number===g.round),match=round&&round.matches.find(x=>x.id===g.code);
+      if(!winner) {
+        const rematch=createPartyGame(p,[...(g.blackKeys||[])],[...(g.whiteKeys||[])],'normal',g.round,g.matchNo,'lower');
+        if(match){match.id=rematch.code;match.white=rematch.whiteKeys[0];match.black=rematch.blackKeys[0];match.winner=null;match.loser=null;match.status='running';match.result='Remis · Entscheidungsspiel';match.times=null;}
+      } else finishLowerMatch(p,g,winKey,loseKey);
+    } else {
+      const round=p.tournament.rounds.find(x=>x.number===g.round),match=round&&round.matches.find(x=>x.id===g.code);
+      if(match && !winner) {
+        const rematch=createPartyGame(p,[...(g.blackKeys||[])],[...(g.whiteKeys||[])],'tournament',g.round,g.matchNo,'main');
+        match.id=rematch.code;match.white=rematch.whiteKeys[0];match.black=rematch.blackKeys[0];match.winner=null;match.loser=null;match.status='running';match.result='Remis · Entscheidungsspiel';match.times=null;
+      } else if(match){
+        match.winner=winKey;match.loser=loseKey;match.status='done';match.result=reason||'';match.times=g.timeStats||null;
+        // Jeder Verlierer (außer dem Finalverlierer) startet sofort in der Trostrunde,
+        // auch wenn andere Hauptturnier-Matches derselben Runde noch laufen.
+        const entrantCount=(p.tournamentPlayers||partyMemberKeys(p)).length;
+        const finalRound=Math.ceil(Math.log2(Math.max(2,entrantCount)));
+        if(loseKey&&g.round<finalRound)enqueueLowerLosers(p,[loseKey]);
+      }
+      advanceTournament(p);
+    }
+    if(p.tournament.finished&&!lowerRoundRunning(p)&&!(p.tournament.lowerBracket.waiting||[]).length)p.status='finished';
+  } else if(!(p.games||[]).some(x=>x.status==='running')) p.status='lobby';
   broadcastParty(p);
 }
 function partyStart(s,p) {
@@ -313,6 +415,7 @@ function partyStart(s,p) {
     p.status='running';broadcastParty(p);return;
   }
   if(p.mode==='tournament') {
+    if(!p.tournamentPreview)return s.emit('room:error',{message:'Bitte zuerst den Turnierbaum auslosen und ansehen.'});
     if(!makeTournament(p)) return s.emit('room:error',{message:'Für ein Turnier werden mindestens zwei Spieler benötigt.'});
     return;
   }
@@ -333,17 +436,18 @@ function partyStart(s,p) {
 }
 function ffaPublic(f) {
   if(!f)return null;
-  return {size:f.size,board:f.board,players:f.players.map(x=>({...x,connected:!(f.offline||[]).includes(x.key)})),order:f.order,alive:f.alive,turn:f.turn,turnKey:f.order[f.turn]||null,winner:f.winner||null,moves:f.moves||0};
+  return {size:f.size,board:f.board,players:f.players.map(x=>({...x,connected:!(f.offline||[]).includes(x.key)})),order:f.order,alive:f.alive,turn:f.turn,turnKey:f.order[f.turn]||null,winner:f.winner||null,winnerTeam:f.winnerTeam||null,coWinners:f.coWinners||[],moves:f.moves||0};
 }
 const FFA_TYPES=['R','N','B','Q','K','B','N','R','P','P'];
 function createFFAState(p) {
-  const n=p.players.length,size=Math.max(14,Math.min(26,Math.ceil(Math.sqrt(n))*8+4)),center=(size-1)/2;
+  const n=p.players.length,size=Math.min(26,14+Math.ceil(Math.max(0,n-4)/4)*4),center=(size-1)/2;
   const colors=['#e53935','#1e88e5','#43a047','#f9a825','#8e24aa','#00acc1','#f4511e','#6d4c41','#d81b60','#3949ab','#7cb342','#fb8c00','#00897b','#5e35b1','#c0ca33','#546e7a'];
   const board=Array(size*size).fill(null),players=p.players.map((m,i)=>{
     const a=(Math.PI*2*i/n)-Math.PI/2,rx=Math.cos(a),ry=Math.sin(a);
     let fx=Math.round(-rx),fy=Math.round(-ry);
     if(Math.abs(fx)+Math.abs(fy)!==1){if(Math.abs(rx)>Math.abs(ry)){fx=rx>0?-1:1;fy=0}else{fy=ry>0?-1:1;fx=0}}
-    return {key:m.key,name:m.name,color:colors[i],forward:{x:fx,y:fy},alive:true};
+    const assigned=p.ffaTeams&&p.ffaTeams[m.key],teamId=assigned&&assigned!=='solo'?'team-'+assigned:'solo-'+m.key;
+    return {key:m.key,name:m.name,color:colors[i],forward:{x:fx,y:fy},alive:true,teamId,teamName:assigned&&assigned!=='solo'?'Gruppe '+assigned:m.name};
   });
   players.forEach((pl,i)=>{
     const a=(Math.PI*2*i/n)-Math.PI/2,rx=Math.cos(a),ry=Math.sin(a),tx=-ry,ty=rx;
@@ -367,10 +471,27 @@ function ffaPathClear(board,size,fx,fy,tx,ty) {
   while(x!==tx||y!==ty){if(board[y*size+x])return false;x+=dx;y+=dy;}
   return true;
 }
+function areFFAAllies(f,a,b) {
+  const pa=(f.players||[]).find(x=>x.key===a),pb=(f.players||[]).find(x=>x.key===b);
+  return !!pa&&!!pb&&pa.teamId===pb.teamId;
+}
+function ffaWinner(f) {
+  if(!f||!f.alive.length)return null;
+  const groups=[...new Set(f.alive.map(k=>(f.players.find(x=>x.key===k)||{}).teamId||k))];
+  return groups.length===1?{key:f.alive[0],teamId:groups[0],coWinners:[...f.alive]}:null;
+}
+function ffaFinishIfDone(p) {
+  const f=p&&p.ffa;if(!f||f.winner)return false;
+  const result=ffaWinner(f);if(!result)return false;
+  f.winner=result.key;f.winnerTeam=result.teamId;f.coWinners=result.coWinners;p.status='finished';
+  const winner=f.players.find(x=>x.key===result.key);
+  io.to('party:'+p.code).emit('ffa:finished',{winner:f.winner,name:winner&&winner.teamName||winner&&winner.name,teamId:f.winnerTeam,coWinners:f.coWinners.map(k=>f.players.find(x=>x.key===k)?.name||k)});
+  return true;
+}
 function ffaLegal(f,key,from,to) {
   const n=f.size,board=f.board;
   if(!Number.isInteger(from)||!Number.isInteger(to)||from<0||to>=n*n||from===to)return false;
-  const piece=board[from],target=board[to];if(!piece||piece.owner!==key||target&&target.owner===key)return false;
+  const piece=board[from],target=board[to];if(!piece||piece.owner!==key||target&&(target.owner===key||areFFAAllies(f,key,target.owner)))return false;
   const fx=from%n,fy=Math.floor(from/n),tx=to%n,ty=Math.floor(to/n),dx=tx-fx,dy=ty-fy,ax=Math.abs(dx),ay=Math.abs(dy),t=piece.type;
   if(t==='N')return (ax===1&&ay===2)||(ax===2&&ay===1);
   if(t==='K')return Math.max(ax,ay)===1;
@@ -392,8 +513,7 @@ function ffaEliminate(p,key) {
   const f=p&&p.ffa;if(!f||!f.alive.includes(key))return;
   f.alive=f.alive.filter(k=>k!==key);f.board=f.board.map(x=>x&&x.owner===key?null:x);f.offline=(f.offline||[]).filter(k=>k!==key);
   if(f.order[f.turn]===key)ffaNext(f);
-  if(f.alive.length===1){f.winner=f.alive[0];p.status='finished';const name=f.players.find(x=>x.key===f.winner)?.name;io.to('party:'+p.code).emit('ffa:finished',{winner:f.winner,name});}
-  else if(f.alive.length===0){f.winner=null;p.status='finished';}
+  ffaFinishIfDone(p);
   io.to('party:'+p.code).emit('ffa:state',ffaPublic(f));saveParties();
 }
 function ffaMove(p,s,d) {
@@ -405,8 +525,7 @@ function ffaMove(p,s,d) {
     f.alive=f.alive.filter(k=>k!==target.owner);
     f.board=f.board.map(x=>x&&x.owner===target.owner?null:x);
   }
-  if(f.alive.length===1){f.winner=f.alive[0];p.status='finished';io.to('party:'+p.code).emit('ffa:finished',{winner:f.winner,name:f.players.find(x=>x.key===f.winner)?.name});}
-  else ffaNext(f);
+  if(!ffaFinishIfDone(p))ffaNext(f);
   io.to('party:'+p.code).emit('ffa:state',ffaPublic(f));
   saveParties();return true;
 }
@@ -892,7 +1011,7 @@ io.on('connection', s => {
     const code=code6(),key=pkey(s);
     const p={code,host:key,mode:'normal',tc:ptime(d&&d.tc||otc),status:'lobby',
       players:[{key,name:U().name,elo:U().elo,av:U().av|0,connected:true,socketId:s.id,currentGame:null}],
-      pairings:[],tournamentPlayers:null,teams:{w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'}},games:[],tournament:null,ffa:null,createdAt:Date.now()};
+      pairings:[],tournamentPlayers:null,tournamentPreview:null,teams:{w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'}},ffaTeams:{},games:[],tournament:null,ffa:null,createdAt:Date.now()};
     parties.set(code,p);s.data.party=code;s.join('party:'+code);
     s.emit('room:created',{code});broadcastParty(p);
   });
@@ -914,7 +1033,7 @@ io.on('connection', s => {
     const mode=String(d&&d.mode||p.mode);if(!PARTY_MODES.includes(mode))return;
     p.tc=ptime(d&&d.tc||p.tc);
     if(mode!==p.mode) {
-      p.mode=mode;p.status='lobby';p.ffa=null;p.tournament=null;p.games=p.games.filter(g=>g.status==='running');
+      p.mode=mode;p.status='lobby';p.ffa=null;p.tournament=null;p.tournamentPreview=null;p.ffaTeams={};p.games=p.games.filter(g=>g.status==='running');
       p.pairings=[];
       if(mode==='team'){p.teams={w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'},colors:{w:'#f5f5f5',b:'#252a34'}};defaultTeamAssign(p);}
       if(mode==='tournament')p.tournamentPlayers=null;
@@ -929,7 +1048,19 @@ io.on('connection', s => {
     const p=parties.get(s.data.party);if(!p||p.host!==pkey(s)||p.mode!=='tournament'||p.status==='running')return;
     const valid=new Set(partyMemberKeys(p));
     p.tournamentPlayers=[...new Set((Array.isArray(d&&d.players)?d.players:[]).map(x=>String(x).toLowerCase()).filter(x=>valid.has(x)))];
-    broadcastParty(p);
+    p.tournamentPreview=null;broadcastParty(p);
+  });
+  s.on('party:tournament-preview',()=>{
+    const p=parties.get(s.data.party);if(!p||p.host!==pkey(s)||p.mode!=='tournament'||p.status==='running')return;
+    const members=new Set(partyMemberKeys(p)),keys=(Array.isArray(p.tournamentPlayers)?p.tournamentPlayers.filter(k=>members.has(k)):partyMemberKeys(p));
+    if(keys.length<2)return s.emit('room:error',{message:'Für die Auslosung werden mindestens zwei Teilnehmer benötigt.'});
+    p.tournamentPreview=buildTournamentPreview(keys);broadcastParty(p);
+  });
+  s.on('party:ffa-teams',d=>{
+    const p=parties.get(s.data.party);if(!p||p.host!==pkey(s)||p.mode!=='ffa'||p.status==='running')return;
+    const valid=new Set(partyMemberKeys(p)),out={};
+    for(const [key,group] of Object.entries(d&&d.groups||{}))if(valid.has(key)){const v=String(group||'solo');out[key]=['1','2','3','4'].includes(v)?v:'solo';}
+    p.ffaTeams=out;broadcastParty(p);
   });
   s.on('party:teams',d=>{
     const p=parties.get(s.data.party);if(!p||p.host!==pkey(s)||p.mode!=='team')return;
@@ -1116,4 +1247,4 @@ io.on('connection', s => {
 const PORT = process.env.PORT || 3000;
 if (require.main === module) loadUsers().then(async () => { await loadParties(); web.listen(PORT, () => console.log('Schach läuft auf Port ' + PORT)); });
 
-module.exports = { web, __test: { startBoard, chLegal, chApplyMove, serverGameEnd, chPositionKey, buildTournamentBracket, createFFAState, ffaLegal, canPartyMove, partyTeamIndex, partyTurnView } };
+module.exports = { web, __test: { startBoard, chLegal, chApplyMove, serverGameEnd, chPositionKey, buildTournamentBracket, buildTournamentPreview, advanceTournament, enqueueLowerLosers, finishPartyGame, setPartyForTest: p => parties.set(p.code, p), createFFAState, ffaLegal, areFFAAllies, ffaWinner, canPartyMove, partyTeamIndex, partyTurnView } };

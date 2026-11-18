@@ -207,7 +207,14 @@ input{-webkit-user-select:text;user-select:text;font:inherit}
 .party-match .winner{color:#00a152;font-weight:600}
 .party-tag{font-size:11px;padding:3px 7px;border-radius:999px;background:rgba(41,121,255,.14);color:#2979ff}
 .party-hint{font-size:12px;color:var(--text-secondary);line-height:1.45}
-#bd.ffa{min-width:520px;aspect-ratio:1;grid-auto-rows:1fr;touch-action:manipulation;border-radius:5px}
+#bd.ffa{width:100%;min-width:0;max-width:none;aspect-ratio:1;grid-auto-rows:1fr;touch-action:pan-y pinch-zoom;border-radius:5px;margin-inline:auto;user-select:none;clip-path:polygon(9% 0,91% 0,100% 9%,100% 91%,91% 100%,9% 100%,0 91%,0 9%)}
+.ffa-board-wrap{width:100%;max-width:660px;margin:0 auto;overflow:auto;overscroll-behavior:contain;border-radius:8px}
+.ffa-tools{display:flex;gap:8px;justify-content:center;align-items:center;margin:8px auto;flex-wrap:wrap}.ffa-tools button{min-width:42px;min-height:40px}
+.party-intermission{border:1px solid rgba(41,121,255,.35);background:rgba(41,121,255,.08);border-radius:14px;padding:12px;margin:12px 0;text-align:center}
+.party-result-time{font-size:11px;color:var(--text-secondary);margin-top:5px;line-height:1.4}
+.party-watch-btn{min-height:38px;white-space:nowrap}.party-lower{border-color:rgba(255,145,0,.35)}
+.party-match button{margin-top:7px}
+@media(max-width:520px){.party-round{flex-basis:160px;min-width:160px}.party-match{padding:8px;font-size:12px}.party-rounds{gap:8px}.ffa-board-wrap{max-width:min(100vw - 28px,560px)}}
 .fq{position:relative;display:grid;place-items:center;aspect-ratio:1;min-width:0;min-height:0;cursor:pointer;user-select:none}
 .fq.light{background:#ead9bd}.fq.dark{background:#956e50}
 .fq.selected{outline:3px solid #ffca28;outline-offset:-3px;z-index:2}
@@ -223,7 +230,7 @@ input{-webkit-user-select:text;user-select:text;font:inherit}
 <h1 class="sr-only">Schach mit Startmenü, Elo, Bots in fünf Stufen und Aussehen pro Seite</h1>
 <div id="wr">
 <div id="gm">
-<div class="hd"><div id="st"></div><button id="mb" class="pn mbn">Menü</button></div>
+<div class="hd"><div id="st"></div><span style="display:flex;gap:7px;align-items:center"><button id="ptree" class="pn mbn" style="display:none">Turnierbaum</button><button id="mb" class="pn mbn">Menü</button></span></div>
 <div class="rw"><button id="pt" class="pn" style="transform:rotate(180deg)" aria-label="Stift oben"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M13.5 6.5l3 3"/></svg></button><span id="ct" class="cl" style="margin-left:auto"></span></div>
 <div style="position:relative"><div id="bd"></div><svg id="ar" viewBox="0 0 8 8"></svg></div>
 <div class="rw"><span id="cb" class="cl"></span><span style="margin-left:auto;display:flex;gap:8px"><button id="er" class="pn" aria-label="Pfeile löschen"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 20h-10.5l-4.2-4.3a1 1 0 0 1 0-1.4l10-10a1 1 0 0 1 1.4 0l5 5a1 1 0 0 1 0 1.4l-9.2 9.3"/><path d="M18 13.3l-6.3-6.3"/></svg></button><button id="pb" class="pn" aria-label="Stift"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M13.5 6.5l3 3"/></svg></button></span></div>
@@ -266,11 +273,13 @@ let netClock=null,serverOffset=0,hasServerOffset=false,bestClockRtt=Infinity;
 let mo=true,started=false,mm='',scr='home',mode='bot',lvl=2,bl=2,opp={n:'Bot Stufe 3',e:1200},elo=300,e0=300,ed=0,rd=false,rq=0,fnd=0,t1=0,t2=0,ls='w',lret='home';
 let socket=null,onlineSide='w',roomCode='',partyCode='',onlineReady=false,onlineStatus='',lastNetMove=null;
 let rated=false,BL=null,oppLk=null,pc='',sbot=0,ip=null;
-let partyState=null,partyDraftPairs=[],ffaState=null,ffaSel=-1,onlineCanMove=true,onlineSpectator=false,teamTurnMessage='',onlineTeamGame=false;
+let partyState=null,partyRenderSig='',partyDraftPairs=[],ffaState=null,ffaSel=-1,ffaScale=1,onlineCanMove=true,onlineSpectator=false,teamTurnMessage='',onlineTeamGame=false;
 const PARTY_MODES=[['normal','♟','Normal','Mehrere unabhängige klassische Partien.'],['tournament','🏆','Turnier','Zufällige Auslosung mit K.-o.-Baum.'],['ffa','⚔️','Alle gegen Alle','Großes gemeinsames Brett, jeder gegen jeden.'],['team','👥','Team','Mehrere Spieler teilen sich eine Schachfarbe.']];
 let ef={w:'',b:''},P=null,AU=null,SHOP={},note='',authMsg='',pnm='',sent=0,dg=null,dm=0,dd=0,lastBuy='',anm='',apw='',pax=null,atm=0,rst=0,LB=null,lbq=0,PS=null,otc=5,gtc=5,FR=[],FRN=[],frq=0,frn='',ivs=[],pmOn=false,pm=[],nn='',sentB=0,glv=0;
 const SK={fire:{n:'Feuer',c:'#ff6d00',e:'🔥'},bolt:{n:'Blitz',c:'#ffee58',e:'⚡'},ice:{n:'Eis',c:'#80d8ff',e:'❄'},gold:{n:'Gold',c:'#ffc400',e:'★'},neon:{n:'Neon',c:'#69f0ae',e:'✦'},rainbow:{n:'Regenbogen',c:'#ff4081',e:'✺'},ghost:{n:'Geist',c:'#cfe8ff',e:'👻'},toxic:{n:'Gift',c:'#76ff03',e:'☣'},sakura:{n:'Sakura',c:'#ff8ab8',e:'🌸'},thunder:{n:'Donner',c:'#b388ff',e:'⛈'},diamond:{n:'Diamant',c:'#e0f7fa',e:'💎'},phoenix:{n:'Phönix',c:'#ff7043',e:'✨',L:1},aurora:{n:'Aurora',c:'#80deea',e:'🌌'},celestial:{n:'Celestial',c:'#fff4b0',e:'✦',L:1}};
 const esc=s=>String(s).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';'),own=id=>!!(P&&P.owned&&P.owned.includes(id));
+const fmtTimeMs=v=>v==null?'—':String(Math.floor(Math.max(0,v)/60000)).padStart(2,'0')+':'+String(Math.floor(Math.max(0,v)/1000)%60).padStart(2,'0');
+const partyStateSignature=d=>JSON.stringify({mode:d.mode,tc:d.tc,status:d.status,players:(d.players||[]).map(x=>[x.key,x.name,x.connected,x.currentGame]),pairings:d.pairings,tournamentPlayers:d.tournamentPlayers,tournamentPreview:d.tournamentPreview,teams:d.teams,ffaTeams:d.ffaTeams,games:(d.games||[]).map(g=>[g.code,g.status,g.winner,g.bracket,g.round,g.times]),tournament:d.tournament,ffa:d.ffa?{size:d.ffa.size,alive:d.ffa.alive,turn:d.ffa.turn,turnKey:d.ffa.turnKey,winner:d.ffa.winner,winnerTeam:d.ffa.winnerTeam}:null});
 const efc=s=>{const x=lk0().ef[s];return x?' fx-'+x:''},bxc=()=>{const L=lk0();return[L.th.w,L.th.b].map(i=>TH[i]&&TH[i].x).filter(Boolean).join(' ')};
 const pers=()=>{try{localStorage.setItem('chessAuth',JSON.stringify(AU));localStorage.setItem('chessProfile',JSON.stringify(P));localStorage.setItem('chessElo',elo)}catch(x){}};
 const savePro=()=>{pers();socket?.emit('profile:save',{presets:P.presets,av:P.av|0})};
@@ -445,11 +454,31 @@ else if(scr=='lobby'){
  if(ps.mode==='normal'){
    config='<div class="party-panel"><div class="lb">Paarungen vor Spielbeginn</div>'+(host?pairs.map((pair,i)=>'<div class="party-pair"><select class="party-field" data-pair="'+i+'" data-side="w"'+(setupLocked?' disabled':'')+'>'+opts(pair[0])+'</select><span>vs.</span><select class="party-field" data-pair="'+i+'" data-side="b"'+(setupLocked?' disabled':'')+'>'+opts(pair[1])+'</select></div>').join(''):'<div class="party-hint">Die Paarungen werden vom Party-Leiter festgelegt.</div>')+'<div class="party-hint">Jedes Paar erhält ein eigenes Brett. Nicht zugewiesene Spieler können zuschauen oder in einem zweiten Tab gegen einen Bot trainieren.</div></div>';
  } else if(ps.mode==='tournament'){
-   const tr=ps.tournament,selected=Array.isArray(ps.tournamentPlayers)?ps.tournamentPlayers:ppl.map(x=>x.key);
-   const participantHtml='<div class="party-panel"><div class="lb">Turnierteilnehmer auswählen</div><div class="party-hint">Nur ausgewählte Spieler kommen in die zufällige K.-o.-Auslosung.</div>'+ppl.map(x=>'<label class="party-row" style="cursor:pointer"><input type="checkbox" data-tournament-player="'+esc(x.key)+'" '+(selected.includes(x.key)?'checked ':'')+(setupLocked?'disabled':'')+'><span class="ct"><span class="c1">'+esc(x.name)+'</span><span class="c2">'+(x.connected?'Online':'Offline')+'</span></span></label>').join('')+'</div>';
-   config=participantHtml+'<div class="party-panel"><div class="lb">K.-o.-Turnier</div><div class="party-hint">'+selected.length+' ausgewählte Spieler. Bei nicht voller Zweierpotenz werden Freilose in Runde 1 vergeben. Verlierer scheiden aus.</div>'+(tr&&tr.rounds?'<div class="party-rounds">'+tr.rounds.map(r=>'<div class="party-round"><b>Runde '+r.number+'</b><div class="party-bracket">'+r.matches.map(m=>'<div class="party-match"><strong>'+(m.bye?'Freilos':'Partie')+'</strong><div class="'+(m.winner===m.white?'winner':'')+'">'+esc(names[m.white]||m.white)+'</div><div class="'+(m.winner===m.black?'winner':'')+'">'+esc(names[m.black]||m.black||'Freilos')+'</div><div class="party-hint">'+(m.status==='done'?(m.bye?'Direkt weiter':'Beendet'):'Läuft / wartet')+'</div></div>').join('')+'</div></div>').join('')+'</div>':'<div class="party-hint" style="margin-top:12px">Der Turnierbaum erscheint nach der Auslosung.</div>')+(tr&&tr.champion?'<div class="eb" style="margin-top:12px"><div class="e1" style="font-size:34px">🏆</div><div class="e2">Turniersieger</div><strong>'+esc(names[tr.champion]||tr.champion)+'</strong></div>':'')+'</div>';
+   const tr=ps.tournament,preview=ps.tournamentPreview,selected=Array.isArray(ps.tournamentPlayers)?ps.tournamentPlayers:ppl.map(x=>x.key);
+   const playerName=k=>esc(names[k]||k||'Noch offen');
+   const timeLine=m=>m.times?'<div class="party-result-time">Spielzeit '+playerName(m.white)+': '+fmtTimeMs(m.times.whiteUsedMs)+' · '+playerName(m.black)+': '+fmtTimeMs(m.times.blackUsedMs)+'</div>':'';
+   const renderBracket=tree=>'<div class="party-rounds">'+(tree.rounds||[]).map(r=>'<div class="party-round"><b>Runde '+r.number+'</b><div class="party-bracket">'+(r.matches||[]).map(m=>{
+     const game=(ps.games||[]).find(g=>g.code===m.id),status=m.bye?'Freilos':m.status==='done'?'Beendet':game&&game.status==='running'?'Läuft':'Wartet';
+     return '<div class="party-match"><strong>'+(m.bye?'Freilos':(m.id&&m.id.startsWith('lower-')?'Platzierungsspiel':'Match'))+' · '+status+'</strong><div class="'+(m.winner===m.white?'winner':'')+'">'+playerName(m.white)+'</div><div class="'+(m.winner===m.black?'winner':'')+'">'+playerName(m.black)+'</div>'+(m.result?'<div class="party-hint">'+esc(m.result)+'</div>':'')+timeLine(m)+(game&&game.status==='running'?'<button class="pn mbn party-watch-btn" data-a="partyWatch" data-id="'+game.code+'">▶ Dieses Spiel ansehen</button>':'')+'</div>';
+   }).join('')+'</div></div>').join('')+'</div>';
+   const participantHtml='<div class="party-panel"><div class="lb">Turnierteilnehmer auswählen</div><div class="party-hint">Wähle die Teilnehmer. Danach wird der Turnierbaum zufällig ausgelost und vor dem Start angezeigt.</div>'+ppl.map(x=>'<label class="party-row" style="cursor:pointer"><input type="checkbox" data-tournament-player="'+esc(x.key)+'" '+(selected.includes(x.key)?'checked ':'')+(setupLocked?'disabled':'')+'><span class="ct"><span class="c1">'+esc(x.name)+'</span><span class="c2">'+(x.connected?'Online':'Offline')+'</span></span></label>').join('')+'</div>';
+   let bracketHtml='';
+   if(preview){bracketHtml='<div class="party-panel"><div class="lb">Ausgeloster Turnierbaum · Vorschau</div><div class="party-hint">Die Paarungen sind ausgelost. Prüfe den Baum und starte danach das Turnier.</div>'+renderBracket(preview)+'</div>';}
+   else if(tr&&tr.rounds){
+     bracketHtml='<div class="party-panel"><div class="lb">Turnierbaum · '+(tr.phase==='finished'?'Abgeschlossen':tr.phase==='intermission'?'Rundenpause':'Laufendes Turnier')+'</div>';
+     if(tr.phase==='intermission'&&tr.nextRoundAt)bracketHtml+='<div class="party-intermission"><div style="font-size:25px">⏳</div><b>Alle Matches dieser Runde sind beendet.</b><div class="party-hint" id="tournamentCountdown">Nächste Runde startet in 10 Sekunden</div><div class="party-hint">Du kannst den Turnierbaum ansehen, ein anderes Spiel verfolgen oder im separaten Tab gegen den Bot trainieren.</div></div>';
+     bracketHtml+=renderBracket(tr);
+     if(tr.champion)bracketHtml+='<div class="eb" style="margin-top:12px"><div class="e1" style="font-size:34px">🏆</div><div class="e2">Turniersieger</div><strong>'+playerName(tr.champion)+'</strong>'+(tr.runnerUp?'<div class="party-hint">Zweiter Platz: '+playerName(tr.runnerUp)+'</div>':'')+'</div>';
+     const lb=tr.lowerBracket;
+     if(lb&&(lb.rounds||[]).length){bracketHtml+='<div class="party-panel party-lower"><div class="lb">Trostrunde · Platzierungsspiele</div><div class="party-hint">Ausgeschiedene Spieler spielen parallel weiter um weitere Platzierungen.</div>'+renderBracket(lb)+'</div>';}
+     if(lb&&(lb.placements||[]).length)bracketHtml+='<div class="party-hint">Platzierungen: '+lb.placements.map(x=>playerName(x.key)+' (Platz '+x.place+')').join(' · ')+'</div>';
+     bracketHtml+='</div>';
+   } else bracketHtml='<div class="party-panel"><div class="lb">Noch kein Turnierbaum</div><div class="party-hint">Vor jedem Turnierstart wird hier die zufällige Auslosung angezeigt.</div></div>';
+   config=participantHtml+'<div class="party-panel"><div class="lb">K.-o.-Turnier und Trostrunde</div><div class="party-hint">'+selected.length+' ausgewählte Spieler. Das System verteilt Freilose, setzt Gewinner automatisch weiter und eröffnet für ausgeschiedene Spieler eine parallele Trostrunde.</div>'+(host&&(!tr||tr.finished)&&!preview?'<button class="go" data-a="partyPreview" '+(selected.length<2?'disabled':'')+'>🎲 Turnierbaum auslosen und ansehen</button>':'')+(host&&preview?'<button class="go" data-a="partyStart">Turnier mit diesem Baum starten</button>':'')+bracketHtml+'</div>';
  } else if(ps.mode==='ffa'){
-   config='<div class="party-panel"><div class="lb">Gemeinsames Mehrspieler-Brett</div><div class="party-hint">Jeder Spieler startet mit zehn Figuren und einem eigenen König. Das Brett wächst automatisch mit der Spielerzahl. König geschlagen = ausgeschieden; die übrigen Spieler ziehen weiter, bis nur ein König lebt.</div>'+(ps.ffa?'<div class="party-hint" style="margin-top:8px">Brettgröße: '+ps.ffa.size+' × '+ps.ffa.size+' · Züge: '+ps.ffa.moves+'</div>':'')+'</div>';
+   const groups=ps.ffaTeams||{};
+   const groupOptions=key=>'<option value="solo"'+((groups[key]||'solo')==='solo'?' selected':'')+'>Einzelspieler</option>'+['1','2','3','4'].map(v=>'<option value="'+v+'"'+(groups[key]===v?' selected':'')+'>Gruppe '+v+'</option>').join('');
+   config='<div class="party-panel"><div class="lb">Vierseitiges Mehrspieler-Schach</div><div class="party-hint">Wie auf dem Vorbild: vier Startseiten rund um ein gemeinsames Brett. Das Brett wächst nur bei größeren Gruppen. Für mehr als vier Spieler kannst du Bündnisse festlegen, zum Beispiel zwei Spieler gegen einen. Verbündete können einander nicht schlagen; die Allianz gewinnt gemeinsam.</div>'+(ppl.length>4?'<div class="party-panel"><div class="lb">Allianzen festlegen · nur Party-Leiter</div>'+ppl.map(x=>'<div class="party-row"><span class="ct"><span class="c1">'+esc(x.name)+'</span></span><select class="party-field" style="max-width:150px" data-ffa-player="'+esc(x.key)+'" '+(!host||setupLocked?'disabled':'')+'>'+groupOptions(x.key)+'</select></div>').join('')+(host&&!setupLocked?'<button class="rs" data-a="partyFFASave">Allianzen speichern</button>':'')+'</div>':'<div class="party-hint">Mit bis zu vier Spielern ist jeder für sich allein. Der Leiter kann mit fünf oder mehr Spielern Teams/Gruppen bilden.</div>')+(ps.ffa?'<div class="party-hint" style="margin-top:8px">Aktuelles Brett: '+ps.ffa.size+' × '+ps.ffa.size+' · Züge: '+ps.ffa.moves+'</div>':'')+'</div>';
  } else {
    const teams=ps.teams||{w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'},colors:{w:'#f5f5f5',b:'#252a34'}};
    const assignment=ppl.map((x,i)=>teams.w.includes(x.key)?'w':teams.b.includes(x.key)?'b':(i<ppl.length/2?'w':'b'));
@@ -460,12 +489,12 @@ else if(scr=='lobby'){
      +(host?'<button class="rs" data-a="partyTeamSave">Teams speichern</button>':'')+'</div>';
  }
  const games=(ps.games||[]).filter(g=>g.kind!=='ffa');
- const watchHtml=games.length?'<div class="party-panel"><div class="lb">Partien und Zuschauer</div>'+games.map(g=>'<div class="party-row"><span class="ct"><span class="c1">'+esc((g.white||[]).join(' + '))+' vs. '+esc((g.black||[]).join(' + '))+'</span><span class="c2">'+(g.status==='running'?'Läuft':'Beendet')+(g.winner?' · Sieger: '+esc(g.winner):'')+'</span></span>'+(g.status==='running'?'<button class="pn mbn" data-a="partyWatch" data-id="'+g.code+'">Zusehen</button>':'')+'</div>').join('')+'</div>':'';
+ const watchHtml=games.some(g=>g.status==='running')?'<div class="party-panel"><div class="lb">Laufende Partien ansehen</div>'+games.filter(g=>g.status==='running').map(g=>'<div class="party-row"><span class="ct"><span class="c1">'+esc((g.white||[]).join(' + '))+' vs. '+esc((g.black||[]).join(' + '))+'</span><span class="c2">'+(g.bracket==='lower'?'Trostrunde':'Hauptrunde')+' · Runde '+g.round+'</span></span><button class="pn mbn party-watch-btn" data-a="partyWatch" data-id="'+g.code+'">▶ Zusehen</button></div>').join('')+'</div>':'';
  h=hd('Party-Lobby','Teile den Code mit Freunden · bis zu 16 Spieler')+'<div class="eb"><div class="e1" style="letter-spacing:8px">'+esc(ps.code||partyCode)+'</div><div class="e2">Party-Code</div></div>'
    +'<button class="rs" data-a="copyCode">Code kopieren</button><div class="party-panel"><div class="lb">Spieler ('+ppl.length+'/16)</div>'+playersHtml+'</div>'
    +'<div class="lb">Spielmodus'+(host?' auswählen':' · vom Leiter gewählt')+'</div><div class="mode-grid">'+modeCards+'</div>'
    +'<div class="party-panel"><div class="lb">Bedenkzeit pro Spieler</div>'+timeButtons+'<div style="display:flex;gap:8px;margin-top:10px"><input id="partyCustomTc" type="number" min="1" max="30" class="party-field" placeholder="Eigene Zeit (1–30 Min)" '+(setupLocked?'disabled':'')+'><button class="pn mbn" data-a="partyCustomTime" '+(setupLocked?'disabled':'')+'>Übernehmen</button></div></div>'+config
-   +(host?'<button class="go" data-a="partyStart"'+(ps.status==='running'?' disabled':'')+'>Spielmodus starten</button>':'<div class="party-hint" style="text-align:center;padding:12px">Der Party-Leiter startet den Modus, sobald alle bereit sind.</div>')
+   +(ps.mode==='tournament'?'':host?'<button class="go" data-a="partyStart"'+(ps.status==='running'?' disabled':'')+'>Spielmodus starten</button>':'<div class="party-hint" style="text-align:center;padding:12px">Der Party-Leiter startet den Modus, sobald alle bereit sind.</div>')
    +watchHtml+'<button class="rs" data-a="partyBot">Separates Bot-Training in neuem Tab</button><button class="rs" data-a="leaveRoom">Party verlassen</button><div class="er">'+onlineStatus+'</div>';
 }
 else if(scr=='search'){
@@ -502,7 +531,8 @@ $('mn').onchange=e=>{
    socket?.emit('party:pairings',{pairs});return;
  }
  if(t.dataset.teamPlayer!==undefined && partyState && AU && partyState.host===AU.name.toLowerCase()) savePartyTeams();
- if(t.dataset.tournamentPlayer!==undefined && partyState && AU && partyState.host===AU.name.toLowerCase()){const players=[...$('mn').querySelectorAll('[data-tournament-player]:checked')].map(x=>x.dataset.tournamentPlayer);socket?.emit('party:tournament-players',{players});}
+ if(t.dataset.tournamentPlayer!==undefined && partyState && AU && partyState.host===AU.name.toLowerCase()){const players=[...$('mn').querySelectorAll('[data-tournament-player]:checked')].map(x=>x.dataset.tournamentPlayer);partyState.tournamentPlayers=players;partyState.tournamentPreview=null;socket?.emit('party:tournament-players',{players});const note=$('mn').querySelector('.party-panel .party-hint');if(note)note.textContent='Teilnehmerauswahl aktualisiert. Bitte danach neu auslosen.';}
+ if(t.dataset.ffaPlayer!==undefined){/* wird gesammelt über „Allianzen speichern“ übertragen */}
 };
 $('mn').ondragstart=e=>{const row=e.target.closest('[data-drag-player]');if(!row)return;e.dataTransfer.setData('text/plain',row.dataset.dragPlayer)};
 $('mn').ondragover=e=>{if(e.target.closest('[data-drop-team]'))e.preventDefault()};
@@ -515,6 +545,11 @@ function savePartyTeams(){
  const names={w:$('teamWhite')?.value||'Team Weiß',b:$('teamBlack')?.value||'Team Schwarz'};
  const colors={w:$('teamWhiteColor')?.value||'#f5f5f5',b:$('teamBlackColor')?.value||'#252a34'};
  socket.emit('party:teams',{w,b,names,colors});
+}
+function savePartyFFATeams(){
+ if(!partyState||!socket?.connected)return;
+ const groups={};$('mn').querySelectorAll('[data-ffa-player]').forEach(x=>groups[x.dataset.ffaPlayer]=x.value||'solo');
+ partyState.ffaTeams=groups;socket.emit('party:ffa-teams',{groups});toast('Allianzen gespeichert');
 }
 function show(){setCol();applyTh();$('gm').style.display=mo?'none':'';$('mn').style.display=mo?'':'none';if(mo)menu();else draw()}
 const rv=()=>{clearTimeout(ot);ovs=false;gv.innerHTML=''};
@@ -542,25 +577,25 @@ ed=Math.round(32*(sc-1/(1+10**((opp.e-elo)/400))));elo=Math.max(100,elo+ed);
 try{localStorage.setItem('chessElo',elo)}catch(x){}}
 function applyPartyTeamColors(colors){if(!onlineTeamGame||!colors)return;const a=colors.w||'#f5f5f5',b=colors.b||'#252a34';wr.style.setProperty('--cw',a);wr.style.setProperty('--cb',b)}
 function startGame(m){
-mode=m;if(m!=='online'){onlineSpectator=false;onlineCanMove=true;}teamTurnMessage='';$('bd').classList.remove('ffa');$('bd').style.width='100%';$('bd').style.gridTemplateColumns='';$('bd').parentElement.style.overflowX='';$('un').style.display='';$('fl').style.display='';$('pt').style.display='';$('pb').style.display='';$('pmr').style.display='';vs=m!='friends';if(m=='online')netLook();else BL={th:{...th},col:{...col},ef:{...ef}};sent=0;pm=[];sentB=0;glv=lvl;
+mode=m;if(m!=='online'){onlineSpectator=false;onlineCanMove=true;}teamTurnMessage='';$('ptree').style.display=(m==='online'&&partyState&&partyState.mode==='tournament')?'':'none';$('bd').classList.remove('ffa');$('bd').style.width='100%';$('bd').style.minWidth='';$('bd').style.gridTemplateColumns='';$('bd').parentElement.classList.remove('ffa-board-wrap');$('bd').parentElement.style.maxWidth='';$('bd').parentElement.style.margin='';$('bd').parentElement.style.overflowX='';$('un').style.display='';$('fl').style.display='';$('pt').style.display='';$('pb').style.display='';$('pmr').style.display='';vs=m!='friends';if(m=='online')netLook();else BL={th:{...th},col:{...col},ef:{...ef}};sent=0;pm=[];sentB=0;glv=lvl;
 if(m=='bot')opp={n:'Bot Stufe '+(lvl+1),e:LV[lvl].e};
 bl=m=='online'?lvOf(opp.e):lvl;
 S=init();H=[];sel=-1;tg=[];pend=null;busy=false;to=null;netClock=null;rd=false;rq=0;flip=m=='online'&&onlineSide=='b';tc=m=='online'?gtc:ntc;ck={w:tc*6e4,b:tc*6e4};ar=[];pf=-1;pen=null;rv();lt=Date.now();
 mo=false;started=true;show();intro()}
 
 function startFFA(d){
- ffaState=d;ffaSel=-1;mode='ffa';vs=false;started=true;mo=false;tc=0;to=null;I={};H=[];sel=-1;tg=[];pm=[];ar=[];rv();$('bd').classList.add('ffa');$('bd').parentElement.style.overflowX='auto';show();drawFFA();
+ ffaState=d;ffaSel=-1;ffaScale=1;mode='ffa';vs=false;started=true;mo=false;tc=0;to=null;I={};H=[];sel=-1;tg=[];pm=[];ar=[];rv();$('bd').classList.add('ffa');$('bd').parentElement.classList.add('ffa-board-wrap');$('bd').parentElement.style.maxWidth='660px';$('bd').parentElement.style.overflowX='auto';show();drawFFA();
 }
 function drawFFA(){
  if(!ffaState)return;
  const f=ffaState,n=f.size,colors=Object.fromEntries((f.players||[]).map(x=>[x.key,x.color]));
  const glyph={K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟'};
- $('bd').className='ffa';$('bd').style.gridTemplateColumns='repeat('+n+',minmax(0,1fr))';$('bd').style.width='100%';$('bd').parentElement.style.overflowX='auto';
+ $('bd').className='ffa';$('bd').style.gridTemplateColumns='repeat('+n+',minmax(0,1fr))';$('bd').style.width=(ffaScale*100)+'%';$('bd').style.minWidth='0';$('bd').parentElement.classList.add('ffa-board-wrap');$('bd').parentElement.style.maxWidth='660px';$('bd').parentElement.style.overflowX=ffaScale>1?'auto':'hidden';
  $('bd').innerHTML=(f.board||[]).map((p,i)=>'<div class="fq '+(((Math.floor(i/n)+(i%n))&1)?'dark':'light')+(ffaSel===i?' selected':'')+'" data-fi="'+i+'">'+(p?'<span class="fp" style="color:'+colors[p.owner]+'">'+(glyph[p.type]||'')+'</span>':'')+'</div>').join('');
  const current=(f.players||[]).find(x=>x.key===f.turnKey),alive=(f.players||[]).filter(x=>f.alive.includes(x.key)),out=(f.players||[]).filter(x=>!f.alive.includes(x.key));
  const order=(f.order||[]).map(k=>{const pl=(f.players||[]).find(x=>x.key===k);return pl?'<span class="'+(k===f.turnKey?'active':'')+' '+(!f.alive.includes(k)?'out':'')+'">'+esc(pl.name)+(pl.connected===false?' · offline':'')+'</span>':''}).filter(Boolean).join(' → ');
  $('st').className=f.winner?'fin':'';
- $('st').innerHTML='<div>'+(f.winner?'🏆 '+esc((f.players||[]).find(x=>x.key===f.winner)?.name||'Sieger')+' gewinnt!':'Zug '+(f.moves+1)+' · '+(current?'Am Zug: <b>'+esc(current.name)+'</b>':'Warte auf Zug'))+'</div><div class="ffa-meta">'+alive.map(x=>'<span class="ffa-chip"><i style="width:9px;height:9px;border-radius:50%;background:'+x.color+'"></i>'+esc(x.name)+(x.connected===false?' · offline':'')+'</span>').join('')+out.map(x=>'<span class="ffa-chip out">'+esc(x.name)+' · ausgeschieden</span>').join('')+'</div><div class="ffa-order"><b>Zugreihenfolge:</b> '+order+'</div><div class="u">'+(f.winner?'Spiel beendet':'Tippe zuerst deine Figur und dann das Zielfeld an. König geschlagen = Spieler scheidet aus.')+'</div>';
+ $('st').innerHTML='<div>'+(f.winner?'🏆 '+esc((f.players||[]).find(x=>x.key===f.winner)?.teamName||(f.players||[]).find(x=>x.key===f.winner)?.name||'Sieger')+' gewinnt!':(f.winnerTeam?'🏆 Allianz gewinnt':'Zug '+(f.moves+1)+' · '+(current?'Am Zug: <b>'+esc(current.name)+'</b>':'Warte auf Zug')))+'</div><div class="ffa-meta">'+alive.map(x=>'<span class="ffa-chip"><i style="width:9px;height:9px;border-radius:50%;background:'+x.color+'"></i>'+esc(x.name)+(x.teamId&&x.teamId.startsWith('team-')?' · '+esc(x.teamName):'')+(x.connected===false?' · offline':'')+'</span>').join('')+out.map(x=>'<span class="ffa-chip out">'+esc(x.name)+' · ausgeschieden</span>').join('')+'</div><div class="ffa-order"><b>Zugreihenfolge:</b> '+order+'</div><div class="ffa-tools"><button class="pn" data-ffa-zoom="out" aria-label="Verkleinern">−</button><span class="party-hint">'+Math.round(ffaScale*100)+'%</span><button class="pn" data-ffa-zoom="in" aria-label="Vergrößern">+</button><button class="pn" data-ffa-zoom="fit">Einpassen</button></div><div class="u">'+(f.winner?'Spiel beendet':'Tippe deine Figur und danach das Zielfeld an. König geschlagen = Spieler scheidet aus.')+'</div>';
  $('ct').innerHTML='';$('cb').innerHTML='';
  $('pt').style.display='none';$('pb').style.display='none';$('er').style.display='none';$('pmr').style.display='none';$('pq').style.display='none';$('un').style.display='none';$('fl').style.display='none';
 }
@@ -586,12 +621,12 @@ if(socket?.connected)return socket;
 if(!socket){socket=io(window.CHESS_SERVER_URL||location.origin);socket.on('connect',()=>{onlineStatus='';try{const lc=JSON.parse(localStorage.getItem('chessLB')||'null');if(lc&&lc.length)socket.emit('lb:seed',{rows:lc})}catch(x){}if(AU)socket.emit('auth:token',{name:AU.name,token:AU.token});else sendAuth()});socket.on('connect_error',()=>{onlineStatus='Server nicht erreichbar. Bitte später erneut versuchen.';if(scr=='search'){clearTimeout(t1);scr='online'}if(scr=='auth'){if(pax)amsg('Server wacht gerade auf … das kann bis zu 1 Minute dauern. Deine Eingaben bleiben erhalten.')}else rn()});
 socket.on('room:created',d=>{partyCode=d.code;roomCode='';try{localStorage.setItem('chessParty',partyCode)}catch(x){}onlineReady=false;partyState=null;scr='lobby';menu()});
 socket.on('room:joined',d=>{partyCode=d.code;try{localStorage.setItem('chessParty',partyCode)}catch(x){}onlineReady=true;scr='lobby';menu()});
-socket.on('party:state',d=>{partyState=d;if(d&&d.code){partyCode=d.code;try{localStorage.setItem('chessParty',partyCode)}catch(x){}}if(onlineTeamGame)applyPartyTeamColors(d.teams&&d.teams.colors);if(mo&&['lobby','party'].includes(scr)){scr='lobby';menu()}});
+socket.on('party:state',d=>{const prevPhase=partyState&&partyState.tournament&&partyState.tournament.phase;const currentLower=mode==='online'&&started&&d.games&&d.games.some(g=>g.code===roomCode&&g.bracket==='lower'&&g.status==='running');const signature=partyStateSignature(d),stateChanged=signature!==partyRenderSig;partyRenderSig=signature;partyState=d;if(d&&d.code){partyCode=d.code;try{localStorage.setItem('chessParty',partyCode)}catch(x){}}if(onlineTeamGame)applyPartyTeamColors(d.teams&&d.teams.colors);$('ptree').style.display=(mode==='online'&&d.mode==='tournament'&&started)?'':'none';if(d.tournament&&d.tournament.phase==='intermission'&&prevPhase!=='intermission'&&!currentLower){started=false;onlineCanMove=false;mo=true;scr='lobby';show();}else if(stateChanged&&mo&&['lobby','party'].includes(scr)){scr='lobby';const y=window.scrollY;menu();window.scrollTo(0,y)}});
 socket.on('game:start',d=>{clearTimeout(t1);roomCode=d.code;onlineSide=d.side==='b'?'b':'w';rated=d.kind=='match';onlineTeamGame=!!d.team;gtc=d.tc||0;onlineCanMove=d.canMove!==false;onlineSpectator=!!d.spectator;teamTurnMessage='';opp={n:(d.opp&&d.opp.n)||(rated?'Gegner':'Mitspieler'),e:+(d.opp&&d.opp.e)||elo,a:(d.opp&&d.opp.a)|0};oppLk=null;startGame('online');if(onlineTeamGame)applyPartyTeamColors(d.teamColors);else{wr.style.setProperty('--cw','#fff');wr.style.setProperty('--cb','#1a1a1a')}setOnlineClock(d.clock);pingClock();rt();if(!onlineSpectator)socket.emit('game:look',myLk())});
 socket.on('game:move',d=>{if(mode!='online'||!started)return;setOnlineClock(d.clock);if(d.by===socket.id)return;const m=legal(S).find(x=>x.f===d.from&&x.t===d.to&&((x.pr||'')===(d.promotion||'')));if(m){go(m);}});
 socket.on('game:sync',d=>{if(mode!=='online'||!started||!d||!Array.isArray(d.board))return;let replay=init(),history=[];for(const h of d.history||[]){const m=legal(replay).find(x=>x.f===h.from&&x.t===h.to&&(!x.pr||(x.pr===(h.promotion||'q'))));if(!m)break;history.push(replay);replay=mk(replay,m)}S={b:d.board.slice(),t:d.turn==='b'?'b':'w',cs:d.castling||'KQkq',ep:Number.isInteger(d.ep)?d.ep:-1,hm:d.halfmove||0,mv:null};H=history;sel=-1;tg=[];pend=null;setOnlineClock(d.clock);draw()});
 socket.on('game:turn',d=>{if(mode!=='online'||!started)return;const key=(AU&&AU.name||'').toLowerCase();onlineCanMove=!onlineSpectator&&d.canMoveKeys&&d.canMoveKeys[onlineSide]===key;if(d.colors)applyPartyTeamColors(d.colors);teamTurnMessage=(d.active&&d.active[S.t]?(d.names&&d.names[S.t]||('Team '+(S.t==='w'?'Weiß':'Schwarz')))+': '+d.active[S.t]+' ist am Zug.':'');draw()});
-socket.on('game:finished',d=>{if(mode!=='online'||!started||to)return;to={end:d.reason||'Partie beendet',win:d.winner||null};onlineCanMove=false;draw()});
+socket.on('game:finished',d=>{if(mode!=='online'||!started)return;if(!to){to={end:d.reason||'Partie beendet',win:d.winner||null};draw();}onlineCanMove=false;if(partyState&&partyState.mode==='tournament'&&d.bracket){started=false;mo=true;scr='lobby';show();toast('Match beendet · Turnierbaum und weitere Spiele verfügbar.');}});
 socket.on('game:verified-end',d=>{if(mode!=='online'||!started||to)return;to={end:d.reason||'Partie beendet',win:d.winner||null};draw()});
 socket.on('ffa:start',d=>startFFA(d));
 socket.on('ffa:state',d=>{if(!d)return;ffaState=d;if(mode==='ffa')drawFFA();else if(mo&&scr==='lobby')menu()});
@@ -735,7 +770,7 @@ $('mn').onkeydown=e=>{if(e.key=='Enter'&&(e.target.id=='ap'||e.target.id=='an'))
 $('mn').oninput=e=>{if(e.target.id=='partyCode')pc=e.target.value.replace(/\D/g,'');if(e.target.id=='pnm')pnm=e.target.value;if(e.target.id=='an')anm=e.target.value;if(e.target.id=='ap')apw=e.target.value;if(e.target.id=='nn')nn=e.target.value;if(e.target.id=='fn')frn=e.target.value};
 $('mn').onclick=e=>{
 const b=e.target.closest('button');if(!b)return;const d=b.dataset,a=d.a;
-if(d.g){if(d.g=='ls')ls=d.v;else if(d.g=='tm')ntc=+d.v;else if(d.g=='lv')lvl=+d.v;else if(d.g=='otc')otc=+d.v;else if(d.g=='ptc'){if(partyState)socket?.emit('party:mode',{mode:partyState.mode,tc:+d.v});return}else{const t=TH[+d.v];if(t.id&&!own(t.id)){mm='Gesperrt: kaufe es im Shop.';menu();return}th[ls]=+d.v;applyTh()}mm='';menu();return}
+if(d.g){if(d.g=='ls')ls=d.v;else if(d.g=='tm')ntc=+d.v;else if(d.g=='lv')lvl=+d.v;else if(d.g=='otc')otc=+d.v;else if(d.g=='ptc'){if(partyState){partyState.tc=+d.v;menu();socket?.emit('party:mode',{mode:partyState.mode,tc:+d.v})}return}else{const t=TH[+d.v];if(t.id&&!own(t.id)){mm='Gesperrt: kaufe es im Shop.';menu();return}th[ls]=+d.v;applyTh()}mm='';menu();return}
 if(d.s){if(!(lret=='online'||lret=='party')&&dist(d.c,col[d.s=='w'?'b':'w'])<140){mm='Diese Figurenfarbe ist der anderen Seite zu ähnlich. Wähle eine andere.';menu();return}col[d.s]=d.c;ef[d.s]=d.x||'';mm='';setCol();menu();return}
 if(a=='lb'){LB=null;lbq=0}
 if(a=='setav'){if(P){P.av=+d.i;savePro()}menu();return}
@@ -745,13 +780,15 @@ if(a=='joinScreen'){scr='join';onlineStatus='';menu();return}
 if(a=='createRoom'){createRoom();return}
 if(a=='joinRoom'){joinRoom();return}
 if(a=='copyCode'){navigator.clipboard?.writeText(partyCode||roomCode);onlineStatus='Party-Code kopiert.';menu();return}
-if(a=='leaveRoom'){socket?.emit('room:leave');roomCode='';partyCode='';partyState=null;onlineReady=false;try{localStorage.removeItem('chessParty')}catch(x){}scr='party';menu();return}
+if(a=='leaveRoom'){socket?.emit('room:leave');roomCode='';partyCode='';partyState=null;partyRenderSig='';onlineReady=false;try{localStorage.removeItem('chessParty')}catch(x){}scr='party';menu();return}
 if(a=='partyLobby'){scr='lobby';mo=true;menu();return}
-if(a=='partyCustomTime'){const v=Math.max(1,Math.min(30,Math.round(+$('partyCustomTc')?.value||5)));if(partyState&&socket?.connected)socket.emit('party:mode',{mode:partyState.mode,tc:v});return}
-if(a=='partyMode'){if(partyState&&socket?.connected)socket.emit('party:mode',{mode:d.mode,tc:partyState.tc||5});return}
-if(a=='partyStart'){if(socket?.connected)socket.emit('party:start');return}
+if(a=='partyCustomTime'){const v=Math.max(1,Math.min(30,Math.round(+$('partyCustomTc')?.value||5)));if(partyState&&socket?.connected){partyState.tc=v;menu();socket.emit('party:mode',{mode:partyState.mode,tc:v});}return}
+if(a=='partyMode'){if(partyState&&socket?.connected){partyState.mode=d.mode;partyState.tournament=null;partyState.tournamentPreview=null;partyState.ffaTeams={};menu();socket.emit('party:mode',{mode:d.mode,tc:partyState.tc||5});}return}
+if(a=='partyPreview'){if(socket?.connected){b.disabled=true;b.textContent='Auslosung läuft…';socket.emit('party:tournament-preview');}return}
+if(a=='partyStart'){if(socket?.connected){b.disabled=true;b.textContent='Wird gestartet…';socket.emit('party:start');}return}
 if(a=='partyWatch'){if(socket?.connected)socket.emit('party:watch',{code:d.id});return}
 if(a=='partyTeamSave'){savePartyTeams();toast('Team-Einstellungen gespeichert');return}
+if(a=='partyFFASave'){savePartyFFATeams();return}
 if(a=='partyBot'){window.open(location.pathname+'?partyBot=1','_blank','noopener');return}
 if(a=='looks'){lret=d.r||'home';ls='w';scr='looks';mm='';menu();return}
 if(a=='lback'){scr=lret;mm='';menu();return}
@@ -772,6 +809,9 @@ if(a=='finv'){if(socket?.connected)socket.emit('invite:send',{name:d.n,tc:otc});
 if(a=='fdel'){if(socket?.connected)socket.emit('friend:del',{name:d.n});return}
 if(a=='install'&&ip){ip.prompt();ip=null;menu()}
 if(a=='back'){mo=false;show();ai()}};
+$('ptree').onclick=()=>{if(partyState&&partyState.mode==='tournament'){mo=true;scr='lobby';show();}};
+$('st').onclick=e=>{const z=e.target.closest('[data-ffa-zoom]');if(!z||mode!=='ffa')return;const v=z.dataset.ffaZoom;ffaScale=v==='in'?Math.min(2.4,+(ffaScale+.2).toFixed(2)):v==='out'?Math.max(1,+(ffaScale-.2).toFixed(2)):1;drawFFA();};
+setInterval(()=>{const el=$('tournamentCountdown'),tr=partyState&&partyState.tournament;if(el&&tr&&tr.nextRoundAt)el.textContent='Nächste Runde startet in '+Math.max(0,Math.ceil((tr.nextRoundAt-Date.now())/1000))+' Sekunden';},250);
 $('un').onclick=()=>{pm=[];
 if(mode=='online'){
 if(onlineSpectator){mo=true;scr='lobby';show();return}

@@ -98,9 +98,25 @@ Private Partys unterstützen jetzt bis zu 16 Spieler. Der Party-Leiter wählt in
 - Bei einem Seiten-Reload kann ein Spieler über seinen gespeicherten Party-Code und sein Konto wieder beitreten. Vorübergehend getrennte Spieler bleiben in der Party; ein dauerhaftes Verlassen entfernt sie.
 - Klassische Züge werden serverseitig geprüft (einschließlich legaler Züge, Königssicherheit, Rochade, en passant und Umwandlung). Elo und Gold werden weiterhin ausschließlich für das vorhandene Ranglisten-Matchmaking vergeben, nicht für Party-Spiele.
 
-Der App-Cache wurde auf `schach-v5` erhöht. Nach dem Hochladen des Updates muss der Server neu bereitgestellt werden; installierte Apps laden die neue Oberfläche beim nächsten Neuladen.
+Der App-Cache wurde im vorherigen Update auf `schach-v5` erhöht. Nach dem Hochladen des Updates muss der Server neu bereitgestellt werden; installierte Apps laden die neue Oberfläche beim nächsten Neuladen.
 
 ## Tests für die Spielmodi
 - `npm test` führt die automatisierten Regel-, Turnier-, FFA-, Team-Rotations- und HTTP-Tests aus.
 - Die Team-Zugfolge überspringt vorübergehend getrennte Teammitglieder; nach einem dauerhaften Austritt kann der Leiter einen neu beigetretenen Spieler dem freien Teamplatz zuweisen.
 - Im Alle-gegen-Alle-Modus sind bis zu 16 Spieler mit jeweils eigener Figurenfarbe vorgesehen.
+
+
+## Update 14 – Turnier-Zuschauer, Trostrunde und vierseitiges FFA-Brett
+
+- Die Turnierauslosung wird als vollständige Vorschau angezeigt, bevor der Host das Turnier startet. Teilnehmerauswahl und Zeitwahl reagieren sofort in der Lobby.
+- Nach einem beendeten Match kehrt der Spieler direkt zum Turnierbaum zurück. Dort lassen sich alle noch laufenden Haupt- und Trostrundenmatches auswählen und live ansehen. Nicht spielende Spieler können weiterhin in einem zweiten Tab gegen den Bot trainieren.
+- Sind alle Matches einer Hauptrunde beendet, wechseln alle Party-Mitglieder in die Turnierübersicht. Dort läuft eine sichtbare 10-Sekunden-Pause, bevor die nächste Runde automatisch startet.
+- Abgeschlossene Partien zeigen die verbrauchte Zeit beider Spieler. Der Turniersieger und der Final-Zweite werden angezeigt.
+- Verlierer aus Hauptrunden spielen parallel in einer Trostrunde weiter. Die Trostrunde ist ebenfalls im Baum sichtbar und ihre laufenden Matches sind direkt anwählbar.
+- Das FFA-Brett orientiert sich nun an der vierseitigen Vorlage: vier gegenüberliegende Startzonen, ein kompakteres und auf Smartphones skalierbares Brett, Zoom-Tasten und eine achteckig abgeschrägte Darstellung.
+- Bei mehr als vier FFA-Spielern kann der Host vor Spielbeginn Spieler in bis zu vier Allianzen einteilen oder als Einzelspieler belassen (zum Beispiel 2 gegen 1). Verbündete können einander nicht schlagen; gewinnt die letzte Allianz, werden ihre verbliebenen Mitglieder gemeinsam als Sieger gewertet.
+
+Der Service-Worker-Cache wurde auf `schach-v6` erhöht. Nach dem Hochladen auf GitHub bitte Render neu deployen und die App einmal neu laden.
+
+### Tests in Update 14
+`npm test` umfasst jetzt zusätzlich die Turnierbaum-Vorschau für sieben Spieler, das kompakte vierseitige FFA-Brett und gemeinsame FFA-Allianzen.
