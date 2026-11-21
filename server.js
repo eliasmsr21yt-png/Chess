@@ -1,7 +1,7 @@
 // Schach-Server: liefert die App aus und verbindet Spieler (Socket.IO)
 const http = require('http'), fs = require('fs'), path = require('path');
 const { Server } = require('socket.io');
-const DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const { Chess } = require('chess.js');
 
 const FILES = {
   'index.html': 'text/html; charset=utf-8',
@@ -31,612 +31,11 @@ let queue = [];            // Wartende Spieler: { id, elo }
 
 const num = v => Math.min(3000, Math.max(100, Math.round(+v) || 300));
 const sock = id => io.sockets.sockets.get(id);
-const code6 = () => { let c; do { c = String(100000 + Math.floor(Math.random() * 900000)); } while (rooms.has(c) || parties.has(c)); return c; };
-
-
-// ---- Erweiterte Mehrspieler-Partys und Spielmodi ----
-const parties = new Map();
-const tournamentTimers = new Map();
-const PARTY_MODES = ['normal', 'tournament', 'ffa', 'team'];
-const PARTY_MAX = 16;
-const startBoard = () => ('rnbqkbnrpppppppp' + ' '.repeat(32) + 'PPPPPPPPRNBQKBNR').split('').map(x => x === ' ' ? '' : x);
-const other = side => side === 'w' ? 'b' : 'w';
-const pkey = s => String(s && s.data && s.data.user && s.data.user.name || '').toLowerCase();
-const ptime = v => Math.max(1, Math.min(30, Math.round(Number(v) || 5)));
-const partyPath = path.join(DIR, 'parties.json');
-let partySaveTimer = null;
-const partySafe = p => ({
-  code: p.code, host: p.host, mode: p.mode, tc: p.tc, status: p.status,
-  players: (p.players || []).map(x => ({ key:x.key, name:x.name, elo:x.elo, av:x.av, connected:!!x.connected, currentGame:x.currentGame || null })),
-  pairings: p.pairings || [], tournamentPlayers:p.tournamentPlayers ?? null,
-  tournamentPreview:p.tournamentPreview || null,
-  teams: p.teams || { w:[], b:[], names:{w:'Team Weiß',b:'Team Schwarz'}, colors:{w:'#f5f5f5',b:'#252a34'} },
-  ffaTeams:p.ffaTeams || {},
-  games: (p.games || []).map(g => ({
-    code:g.code, kind:g.kind, bracket:g.bracket || null, party:g.party, status:g.status, round:g.round, matchNo:g.matchNo,
-    whiteKeys:g.whiteKeys || [], blackKeys:g.blackKeys || [], teamIndex:g.teamIndex || {w:0,b:0},
-    board:g.board || startBoard(), turn:g.turn || 'w', castling:g.castling || 'KQkq', ep:g.ep ?? -1, halfmove:g.halfmove || 0,
-    history:g.history || [], positions:g.positions || {}, moves:g.moves || 0, tc:g.tc || 0, createdAt:g.createdAt || Date.now(), timeStats:g.timeStats || null,
-    clock:g.clock ? {remaining:g.clock.remaining,turn:g.clock.turn,lastAt:g.clock.lastAt,ended:g.clock.ended} : null,
-    winner:g.winner || null, result:g.result || null
-  })),
-  tournament:p.tournament ? {rounds:p.tournament.rounds || [],champion:p.tournament.champion || null,runnerUp:p.tournament.runnerUp || null,finished:!!p.tournament.finished,phase:p.tournament.phase || 'playing',nextRoundAt:p.tournament.nextRoundAt || null,lowerBracket:p.tournament.lowerBracket || {rounds:[],waiting:[],placements:[],champion:null}} : null,
-  ffa:p.ffa || null, createdAt:p.createdAt || Date.now()
-});
-async function flushParties() {
-  clearTimeout(partySaveTimer);
-  const data=JSON.stringify([...parties.values()].map(partySafe));
-  try {
-    if(USE_UP && dbOk) await up(['SET','chess:parties',data]);
-    else {fs.mkdirSync(DIR,{recursive:true});fs.writeFileSync(partyPath+'.tmp',data);fs.renameSync(partyPath+'.tmp',partyPath);}
-  } catch(e){console.error('Partyspeicherung fehlgeschlagen:',e.message);}
-}
-function saveParties() {
-  clearTimeout(partySaveTimer);
-  partySaveTimer=setTimeout(flushParties,180);
-}
-async function loadParties() {
-  let rows = [];
-  try {
-    if (USE_UP && dbOk) {
-      const raw = await up(['GET', 'chess:parties']);
-      rows = typeof raw === 'string' ? JSON.parse(raw) : [];
-    } else if (fs.existsSync(partyPath)) rows = JSON.parse(fs.readFileSync(partyPath, 'utf8'));
-  } catch (e) { console.error('Partys konnten nicht geladen werden:', e.message); }
-  for (const raw of Array.isArray(rows) ? rows : []) {
-    if (!raw || !/^\d{6}$/.test(raw.code) || !Array.isArray(raw.players)) continue;
-    const p = { ...raw, players:raw.players.map(x=>({...x, socketId:null, connected:false})), games:raw.games || [], teams:raw.teams || {w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'}}, ffaTeams:raw.ffaTeams || {} };
-    p.games = p.games.map(g => ({...g, party:p.code, w:null, b:null, positions:g.positions||{[chPositionKey(g)]:1}, clock:g.clock ? {...g.clock,timer:null} : null}));
-    parties.set(p.code,p);
-    for (const g of p.games) if (g.status !== 'done' && g.kind !== 'ffa') {
-      rooms.set(g.code,g);
-      if(g.clock && !g.clock.ended) scheduleClock(g);
-    }
-    if (p.tournament && p.tournament.phase === 'intermission' && p.tournament.nextRoundAt) scheduleTournamentAdvance(p);
-  }
-}
-function partyPlayer(p, key) { return p.players.find(x => x.key === key); }
-function renamePartyMember(oldKey,newKey,newName) {
-  for(const p of parties.values()) {
-    const member=partyPlayer(p,oldKey);if(!member)continue;
-    member.key=newKey;member.name=newName;
-    if(p.host===oldKey)p.host=newKey;
-    const replace=k=>k===oldKey?newKey:k;
-    p.pairings=(p.pairings||[]).map(pair=>pair.map(replace));
-    if(Array.isArray(p.tournamentPlayers))p.tournamentPlayers=p.tournamentPlayers.map(replace);
-    if(p.teams){p.teams.w=(p.teams.w||[]).map(replace);p.teams.b=(p.teams.b||[]).map(replace);}
-    for(const g of p.games||[]) {
-      g.whiteKeys=(g.whiteKeys||[]).map(replace);g.blackKeys=(g.blackKeys||[]).map(replace);
-      if(g.winner&&g.winner.key===oldKey)g.winner.key=newKey;
-    }
-    if(p.tournament) {
-      if(p.tournament.champion===oldKey)p.tournament.champion=newKey;
-      for(const round of p.tournament.rounds||[])for(const match of round.matches||[]) {
-        match.white=replace(match.white);match.black=replace(match.black);match.winner=replace(match.winner);
-      }
-    }
-    if(p.ffaTeams&&p.ffaTeams[oldKey]){p.ffaTeams[newKey]=p.ffaTeams[oldKey];delete p.ffaTeams[oldKey];}
-    if(p.tournamentPreview){p.tournamentPreview.players=(p.tournamentPreview.players||[]).map(replace);p.tournamentPreview.shuffled=(p.tournamentPreview.shuffled||[]).map(replace);for(const r of p.tournamentPreview.rounds||[])for(const m of r.matches||[]){m.white=replace(m.white);m.black=replace(m.black);m.winner=replace(m.winner);}}
-    if(p.tournament&&p.tournament.lowerBracket){const lb=p.tournament.lowerBracket;lb.waiting=(lb.waiting||[]).map(replace);lb.placements=(lb.placements||[]).map(x=>({...x,key:replace(x.key)}));lb.champion=replace(lb.champion);for(const r of lb.rounds||[])for(const m of r.matches||[]){m.white=replace(m.white);m.black=replace(m.black);m.winner=replace(m.winner);m.loser=replace(m.loser);}}
-    if(p.ffa) {
-      p.ffa.players=(p.ffa.players||[]).map(x=>x.key===oldKey?{...x,key:newKey,name:newName}:x);
-      p.ffa.order=(p.ffa.order||[]).map(replace);p.ffa.alive=(p.ffa.alive||[]).map(replace);
-      p.ffa.offline=(p.ffa.offline||[]).map(replace);if(p.ffa.winner===oldKey)p.ffa.winner=newKey;if(p.ffa.lastMove){if(p.ffa.lastMove.by===oldKey)p.ffa.lastMove.by=newKey;if(p.ffa.lastMove.captured&&p.ffa.lastMove.captured.owner===oldKey)p.ffa.lastMove.captured.owner=newKey;}
-      p.ffa.board=(p.ffa.board||[]).map(x=>x&&x.owner===oldKey?{...x,owner:newKey}:x);
-    }
-    broadcastParty(p);
-    if(p.ffa)io.to('party:'+p.code).emit('ffa:state',ffaPublic(p.ffa));
-    for(const g of p.games||[])if(g.kind==='team'&&g.status==='running')io.to(g.code).emit('game:turn',partyTurnView(p,g));
-  }
-}
-function partySnapshot(p) {
-  return {
-    code:p.code, host:p.host, isHost:false, mode:p.mode, tc:p.tc, status:p.status,
-    players:p.players.map(x=>({key:x.key,name:x.name,elo:x.elo,av:x.av,connected:!!x.connected,currentGame:x.currentGame||null,isHost:x.key===p.host})),
-    pairings:p.pairings || [], tournamentPlayers:p.tournamentPlayers ?? null, tournamentPreview:p.tournamentPreview || null,
-    teams:p.teams || {w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'},colors:{w:'#f5f5f5',b:'#252a34'}}, ffaTeams:p.ffaTeams || {},
-    games:(p.games||[]).map(g=>({code:g.code,kind:g.kind,bracket:g.bracket||null,round:g.round,matchNo:g.matchNo,status:g.status,white:(g.whiteKeys||[]).map(k=>partyPlayer(p,k)?.name||k),black:(g.blackKeys||[]).map(k=>partyPlayer(p,k)?.name||k),whiteKeys:g.whiteKeys||[],blackKeys:g.blackKeys||[],winner:g.winner ? (partyPlayer(p,g.winner.key)?.name||g.winner.key) : null,result:g.result,times:g.timeStats||null})),
-    tournament:p.tournament ? {rounds:p.tournament.rounds,champion:p.tournament.champion,runnerUp:p.tournament.runnerUp||null,finished:!!p.tournament.finished,phase:p.tournament.phase||'playing',nextRoundAt:p.tournament.nextRoundAt||null,lowerBracket:p.tournament.lowerBracket||{rounds:[],waiting:[],placements:[],champion:null}} : null,
-    ffa:p.ffa ? ffaPublic(p.ffa) : null
-  };
-}
-function broadcastParty(p) {
-  const v=partySnapshot(p);
-  io.to('party:'+p.code).emit('party:state',v);
-  saveParties();
-}
-function addPartyMember(p,s) {
-  const key=pkey(s); if(!key) return null;
-  let m=partyPlayer(p,key);
-  if (!m) {
-    if (p.players.length >= PARTY_MAX) return null;
-    m={key,name:s.data.user.name,elo:s.data.user.elo,av:s.data.user.av|0,connected:true,socketId:s.id,currentGame:null};
-    p.players.push(m);
-  } else {
-    m.name=s.data.user.name; m.elo=s.data.user.elo; m.av=s.data.user.av|0; m.connected=true; m.socketId=s.id;
-  }
-  s.data.party=p.code; s.join('party:'+p.code);
-  // Eine ausdrücklich gespeicherte Turnierauswahl bleibt verbindlich; neue Gäste
-  // werden nicht stillschweigend nach der Auslosung in das Turnier aufgenommen.
-  if(p.mode==='team') {if(!p.teams)p.teams={w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'},colors:{w:'#f5f5f5',b:'#252a34'}};if(!(p.teams.w||[]).includes(key)&&!(p.teams.b||[]).includes(key)){const target=(p.teams.w||[]).length<=(p.teams.b||[]).length?'w':'b';p.teams[target].push(key);}}
-  if(p.ffa){p.ffa.offline=(p.ffa.offline||[]).filter(k=>k!==key);s.emit('ffa:state',ffaPublic(p.ffa));}
-  // Laufende Partie nach einem Reload wieder aufnehmen.
-  const g=(p.games||[]).find(x=>x.status==='running' && ((x.whiteKeys||[]).includes(key)||(x.blackKeys||[]).includes(key)));
-  if(g && g.kind!=='ffa') {
-    s.data.room=g.code; s.join(g.code);
-    const side=g.whiteKeys.includes(key)?'w':'b';
-    s.emit('game:start',{code:g.code,side,kind:'party',tc:g.tc||0,clock:g.clock?clockView(g):null,opp:{n:side==='w'?(g.blackKeys||[]).map(k=>partyPlayer(p,k)?.name||k).join(', '):(g.whiteKeys||[]).map(k=>partyPlayer(p,k)?.name||k).join(', '),e:0},canMove:canPartyMove(g,key),partyGame:true,team:g.kind==='team',teamColors:p.teams&&p.teams.colors});
-    s.emit('game:sync',{board:g.board,turn:g.turn,castling:g.castling,ep:g.ep,halfmove:g.halfmove,history:g.history||[],clock:g.clock?clockView(g):null});
-    s.emit('game:turn',partyTurnView(p,g));
-  } else s.data.room=null;
-  return m;
-}
-function partyMemberKeys(p) { return p.players.map(x=>x.key); }
-function defaultTeamAssign(p) {
-  const keys=partyMemberKeys(p),cut=Math.ceil(keys.length/2);
-  p.teams=p.teams||{};p.teams.w=keys.slice(0,cut);p.teams.b=keys.slice(cut);
-  p.teams.names=p.teams.names||{w:'Team Weiß',b:'Team Schwarz'};p.teams.colors=p.teams.colors||{w:'#f5f5f5',b:'#252a34'};
-}
-function validPairings(p, pairs) {
-  if(!Array.isArray(pairs)) return null;
-  const valid=new Set(partyMemberKeys(p)), seen=new Set(), out=[];
-  for(const pair of pairs.slice(0,8)) {
-    if(!Array.isArray(pair) || pair.length!==2) continue;
-    const [a,b]=pair.map(x=>String(x||'').toLowerCase());
-    if(!valid.has(a)||!valid.has(b)||a===b||seen.has(a)||seen.has(b)) continue;
-    seen.add(a);seen.add(b);out.push([a,b]);
-  }
-  return out;
-}
-function partyTeamIndex(p,g,side) {
-  const list=g[side==='w'?'whiteKeys':'blackKeys']||[];
-  if(!list.length)return 0;
-  const start=(g.teamIndex&&g.teamIndex[side]||0)%list.length;
-  for(let step=0;step<list.length;step++) {
-    const index=(start+step)%list.length,member=partyPlayer(p,list[index]);
-    if(member&&member.connected)return index;
-  }
-  return start; // Kein Teammitglied online: die Uhr läuft weiter, Ersatz ist über die Lobby möglich.
-}
-function canPartyMove(g,key) {
-  const side=(g.whiteKeys||[]).includes(key)?'w':(g.blackKeys||[]).includes(key)?'b':null;
-  if(!side) return false;
-  const list=g[side==='w'?'whiteKeys':'blackKeys']||[];
-  const p=g.kind==='team'?parties.get(g.party):null;
-  if(g.kind==='team'&&p&&g.teamIndex)g.teamIndex[side]=partyTeamIndex(p,g,side);
-  const index=g.kind==='team'&&p?partyTeamIndex(p,g,side):(g.teamIndex&&g.teamIndex[side]||0)%Math.max(1,list.length);
-  return !!list.length && list[index]===key && (g.kind!=='team'||!p||!!partyPlayer(p,key)?.connected) && (g.turn||'w')===side;
-}
-function emitPartyGameStart(p,g) {
-  const white=(g.whiteKeys||[]),black=(g.blackKeys||[]);
-  for(const key of [...white,...black]) {
-    const m=partyPlayer(p,key),x=m && sock(m.socketId);
-    if(!x) continue;
-    x.data.room=g.code; x.join(g.code); m.currentGame=g.code;
-    const side=white.includes(key)?'w':'b';
-    const oppKeys=side==='w'?black:white;
-    x.emit('game:start',{code:g.code,side,kind:'party',tc:g.tc||0,clock:g.clock?clockView(g):null,
-      opp:{n:oppKeys.map(k=>partyPlayer(p,k)?.name||k).join(' + '),e:0},
-      canMove:canPartyMove(g,key),partyGame:true,team:g.kind==='team',teamColors:p.teams&&p.teams.colors});
-  }
-  io.to(g.code).emit('game:turn',partyTurnView(p,g));
-  broadcastParty(p);
-}
-function partyTurnView(p,g) {
-  const active={};
-  for(const side of ['w','b']) {
-    const a=g[side==='w'?'whiteKeys':'blackKeys']||[];
-    if(g.kind==='team'&&a.length)g.teamIndex[side]=partyTeamIndex(p,g,side);
-    active[side]=a.length ? (partyPlayer(p,a[(g.teamIndex&&g.teamIndex[side]||0)%a.length])?.name||a[0]) : '';
-  }
-  const party=parties.get(g.party);return {turn:g.turn,active,names:party&&party.teams&&party.teams.names||{w:'Team Weiß',b:'Team Schwarz'},colors:party&&party.teams&&party.teams.colors||{w:'#f5f5f5',b:'#252a34'},canMoveKeys:{
-    w:(g.whiteKeys||[]).length?g.whiteKeys[(g.teamIndex&&g.teamIndex.w||0)%g.whiteKeys.length]:'',
-    b:(g.blackKeys||[]).length?g.blackKeys[(g.teamIndex&&g.teamIndex.b||0)%g.blackKeys.length]:''
-  }};
-}
-function createPartyGame(p,whiteKeys,blackKeys,kind='normal',round=0,matchNo=0,bracket=null) {
-  const code=code6(),tc=ptime(p.tc);
-  const g={code,kind:kind==='team'?'team':'party-game',bracket:bracket||(kind==='tournament'?'main':null),party:p.code,whiteKeys:[...whiteKeys],blackKeys:[...blackKeys],
-    w:null,b:null,teamIndex:{w:0,b:0},tc,turn:'w',board:startBoard(),castling:'KQkq',ep:-1,halfmove:0,history:[],moves:0,positions:{},
-    status:'running',round,matchNo,winner:null,result:null,res:{},e:{},u:{},createdAt:Date.now()};
-  g.positions[chPositionKey(g)]=1;
-  if(tc>0){const ms=tc*60000,now=Date.now();g.clock={remaining:{w:ms,b:ms},turn:'w',lastAt:now,ended:false,timer:null};scheduleClock(g);}
-  rooms.set(code,g);p.games.push(g);emitPartyGameStart(p,g);return g;
-}
-function buildTournamentBracket(keys) {
-  const shuffled=[...keys];
-  for(let i=shuffled.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[shuffled[i],shuffled[j]]=[shuffled[j],shuffled[i]];}
-  const bracket=2**Math.ceil(Math.log2(shuffled.length)),byeCount=bracket-shuffled.length;
-  return {shuffled,byeKeys:shuffled.slice(0,byeCount),pairs:Array.from({length:(shuffled.length-byeCount)/2},(_,i)=>[shuffled[byeCount+i*2],shuffled[byeCount+i*2+1]]),bracket};
-}
-function buildTournamentPreview(keys) {
-  if(!Array.isArray(keys)||keys.length<2)return null;
-  const {shuffled,byeKeys,pairs,bracket}=buildTournamentBracket(keys);
-  const rounds=[];
-  const first=[...byeKeys.map(key=>({white:key,black:null,bye:true,status:'bye',winner:key})),...pairs.map(([white,black])=>({white,black,bye:false,status:'preview',winner:null}))];
-  rounds.push({number:1,matches:first});
-  let count=bracket/4,number=2;
-  while(count>=1){rounds.push({number,matches:Array.from({length:count},()=>({white:null,black:null,bye:false,status:'preview',winner:null}))});count=Math.floor(count/2);number++;}
-  return {players:[...keys],shuffled,bracket,rounds,createdAt:Date.now()};
-}
-function makeTournament(p) {
-  const members=new Set(partyMemberKeys(p));
-  const keys=(Array.isArray(p.tournamentPlayers)?p.tournamentPlayers.filter(k=>members.has(k)):partyMemberKeys(p));
-  if(keys.length<2) return false;
-  let preview=p.tournamentPreview;
-  if(!preview||preview.players.length!==keys.length||preview.players.some(k=>!keys.includes(k))) preview=buildTournamentPreview(keys);
-  p.tournament={rounds:[],champion:null,runnerUp:null,finished:false,phase:'playing',nextRoundAt:null,
-    lowerBracket:{rounds:[],waiting:[],placements:[],champion:null}};
-  p.tournamentPreview=preview;p.tournamentPlayers=[...keys];
-  const r={number:1,matches:[]};
-  for(const [i,m] of preview.rounds[0].matches.entries()) {
-    if(m.bye){r.matches.push({id:'bye-'+Date.now()+'-'+i,white:m.white,black:null,winner:m.white,loser:null,bye:true,status:'done',result:'Freilos'});}
-    else {const g=createPartyGame(p,[m.white],[m.black],'tournament',1,i+1,'main');r.matches.push({id:g.code,white:m.white,black:m.black,winner:null,loser:null,bye:false,status:'running'});}
-  }
-  p.tournament.rounds.push(r);p.status='running';p.tournamentPreview=null;broadcastParty(p);return true;
-}
-function lowerRoundRunning(p) {
-  return (p.games||[]).some(g=>g.bracket==='lower'&&g.status==='running');
-}
-function startLowerBracketRound(p) {
-  const t=p.tournament,lb=t&&t.lowerBracket;if(!lb||lowerRoundRunning(p))return;
-  lb.waiting=[...new Set(lb.waiting||[])];
-  if(lb.waiting.length<2) {
-    if(t.finished&&lb.waiting.length===1&&!lb.champion){lb.champion=lb.waiting[0];lb.placements.unshift({key:lb.champion,place:3});lb.waiting=[];}
-    return;
-  }
-  const entrants=lb.waiting.splice(0);
-  for(let i=entrants.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[entrants[i],entrants[j]]=[entrants[j],entrants[i]];}
-  const round={number:lb.rounds.length+1,matches:[]};
-  if(entrants.length%2){const key=entrants.shift();round.matches.push({id:'lower-bye-'+Date.now(),white:key,black:null,winner:key,loser:null,bye:true,status:'done',result:'Freilos'});lb.waiting.push(key);}
-  for(let i=0;i<entrants.length;i+=2){
-    const g=createPartyGame(p,[entrants[i]],[entrants[i+1]],'normal',round.number,round.matches.length+1,'lower');
-    round.matches.push({id:g.code,white:entrants[i],black:entrants[i+1],winner:null,loser:null,bye:false,status:'running'});
-  }
-  lb.rounds.push(round);
-}
-function enqueueLowerLosers(p,losers) {
-  const lb=p.tournament&&p.tournament.lowerBracket;if(!lb)return;
-  for(const key of losers||[])if(key&&!lb.waiting.includes(key)&&!lb.placements.some(x=>x.key===key)&&!lb.rounds.some(r=>r.matches.some(m=>m.white===key||m.black===key)))lb.waiting.push(key);
-  startLowerBracketRound(p);
-}
-function finishLowerMatch(p,g,winnerKey,loserKey) {
-  const lb=p.tournament&&p.tournament.lowerBracket;if(!lb)return;
-  const round=lb.rounds.find(r=>r.number===g.round),match=round&&round.matches.find(m=>m.id===g.code);
-  if(match){match.winner=winnerKey;match.loser=loserKey;match.status='done';match.result=g.result;match.times=g.timeStats||null;}
-  if(loserKey&&!lb.placements.some(x=>x.key===loserKey))lb.placements.push({key:loserKey,place:4+lb.placements.length});
-  if(winnerKey&&!lb.waiting.includes(winnerKey))lb.waiting.push(winnerKey);
-  if(!lowerRoundRunning(p))startLowerBracketRound(p);
-}
-function scheduleTournamentAdvance(p) {
-  const t=p&&p.tournament;if(!t||t.phase!=='intermission'||!t.nextRoundAt)return;
-  const old=tournamentTimers.get(p.code);if(old)clearTimeout(old);
-  const delay=Math.max(0,t.nextRoundAt-Date.now());
-  const timer=setTimeout(()=>{tournamentTimers.delete(p.code);launchTournamentNextRound(p);},delay);
-  if(timer.unref)timer.unref();tournamentTimers.set(p.code,timer);
-}
-function launchTournamentNextRound(p) {
-  const t=p&&p.tournament;if(!t||t.finished||t.phase!=='intermission')return;
-  if(t.nextRoundAt>Date.now())return scheduleTournamentAdvance(p);
-  const current=t.rounds[t.rounds.length-1],winners=(current&&current.matches||[]).map(m=>m.winner).filter(Boolean);
-  if(winners.length<=1){t.champion=winners[0]||t.champion;t.finished=true;t.phase='finished';t.nextRoundAt=null;startLowerBracketRound(p);p.status=lowerRoundRunning(p)?'running':'finished';broadcastParty(p);return;}
-  const next={number:current.number+1,matches:[]};
-  for(let i=0;i<winners.length;i+=2){
-    if(i+1>=winners.length){next.matches.push({id:'bye-'+Date.now()+'-'+i,white:winners[i],black:null,winner:winners[i],loser:null,bye:true,status:'done',result:'Freilos'});continue;}
-    const g=createPartyGame(p,[winners[i]],[winners[i+1]],'tournament',next.number,next.matches.length+1,'main');
-    next.matches.push({id:g.code,white:winners[i],black:winners[i+1],winner:null,loser:null,bye:false,status:'running'});
-  }
-  t.rounds.push(next);t.phase='playing';t.nextRoundAt=null;broadcastParty(p);
-  if(next.matches.every(m=>m.winner))advanceTournament(p);
-}
-function advanceTournament(p) {
-  const t=p.tournament;if(!t||t.phase==='finished')return;
-  const current=t.rounds[t.rounds.length-1];
-  if(!current||current.matches.some(m=>!m.winner))return;
-  const winners=current.matches.map(m=>m.winner).filter(Boolean);
-  if(winners.length===0){t.champion=null;t.finished=true;t.phase='finished';p.status=lowerRoundRunning(p)?'running':'finished';broadcastParty(p);return;}
-  if(winners.length===1){
-    t.champion=winners[0];t.finished=true;t.phase='finished';t.nextRoundAt=null;
-    const finalMatch=current.matches.find(m=>!m.bye&&m.winner===t.champion);t.runnerUp=finalMatch&&finalMatch.loser||null;
-    // Der Finalverlierer ist Zweiter und spielt nicht mehr in der Trostrunde.
-    startLowerBracketRound(p);p.status=lowerRoundRunning(p)?'running':'finished';broadcastParty(p);return;
-  }
-  if(!current.lowerProcessed){current.lowerProcessed=true;enqueueLowerLosers(p,current.matches.filter(m=>!m.bye).map(m=>m.loser).filter(Boolean));}
-  t.phase='intermission';t.nextRoundAt=Date.now()+10000;p.status='running';scheduleTournamentAdvance(p);broadcastParty(p);
-}
-function partyGameTimeStats(g,now=Date.now()) {
-  const elapsedMs=Math.max(0,now-(g.createdAt||now));
-  if(!g.clock)return {whiteUsedMs:null,blackUsedMs:null,whiteRemainingMs:null,blackRemainingMs:null,elapsedMs};
-  const remaining=clockView(g,now).remaining,initial=(g.tc||0)*60000;
-  return {whiteUsedMs:Math.max(0,initial-remaining.w),blackUsedMs:Math.max(0,initial-remaining.b),whiteRemainingMs:remaining.w,blackRemainingMs:remaining.b,elapsedMs};
-}
-function finishPartyGame(g,winner,reason) {
-  if(!g || g.status==='done') return;
-  const now=Date.now();g.timeStats=partyGameTimeStats(g,now);
-  g.status='done';g.result=reason||'beendet';
-  const winKey=winner?(winner==='w'?(g.whiteKeys||[])[0]:(g.blackKeys||[])[0]):null;
-  const loseKey=winner?(winner==='w'?(g.blackKeys||[])[0]:(g.whiteKeys||[])[0]):null;
-  g.winner=winKey?{side:winner,key:winKey}:null;
-  if(g.clock){g.clock.ended=true;g.clock.lastAt=now;clearTimeout(g.clock.timer);g.clock.timer=null;}
-  const p=parties.get(g.party);if(!p)return;
-
-  // Erst das Ergebnis des alten Spiels senden und den alten Raum schließen.
-  // Danach darf ein Spieler direkt in ein Trostrunden- oder Rematch-Spiel wechseln.
-  io.to(g.code).emit('game:finished',{code:g.code,bracket:g.bracket||null,winner,reason});
-  const roomIds=io.sockets.adapter&&io.sockets.adapter.rooms&&io.sockets.adapter.rooms.get(g.code);
-  for(const id of [...(roomIds||[])]) {
-    const x=sock(id);if(x&&x.data.room===g.code)x.data.room=null;if(x)x.leave(g.code);
-  }
-  for(const k of [...(g.whiteKeys||[]),...(g.blackKeys||[])]) {
-    const m=partyPlayer(p,k);if(m&&m.currentGame===g.code)m.currentGame=null;
-    const x=m&&sock(m.socketId);if(x&&x.data.room===g.code)x.data.room=null;
-  }
-  rooms.delete(g.code);
-
-  if(p.mode==='tournament' && p.tournament) {
-    if(g.bracket==='lower') {
-      const lb=p.tournament.lowerBracket,round=lb&&lb.rounds.find(x=>x.number===g.round),match=round&&round.matches.find(x=>x.id===g.code);
-      if(!winner) {
-        const rematch=createPartyGame(p,[...(g.blackKeys||[])],[...(g.whiteKeys||[])],'normal',g.round,g.matchNo,'lower');
-        if(match){match.id=rematch.code;match.white=rematch.whiteKeys[0];match.black=rematch.blackKeys[0];match.winner=null;match.loser=null;match.status='running';match.result='Remis · Entscheidungsspiel';match.times=null;}
-      } else finishLowerMatch(p,g,winKey,loseKey);
-    } else {
-      const round=p.tournament.rounds.find(x=>x.number===g.round),match=round&&round.matches.find(x=>x.id===g.code);
-      if(match && !winner) {
-        const rematch=createPartyGame(p,[...(g.blackKeys||[])],[...(g.whiteKeys||[])],'tournament',g.round,g.matchNo,'main');
-        match.id=rematch.code;match.white=rematch.whiteKeys[0];match.black=rematch.blackKeys[0];match.winner=null;match.loser=null;match.status='running';match.result='Remis · Entscheidungsspiel';match.times=null;
-      } else if(match){
-        match.winner=winKey;match.loser=loseKey;match.status='done';match.result=reason||'';match.times=g.timeStats||null;
-        // Jeder Verlierer (außer dem Finalverlierer) startet sofort in der Trostrunde,
-        // auch wenn andere Hauptturnier-Matches derselben Runde noch laufen.
-        const entrantCount=(p.tournamentPlayers||partyMemberKeys(p)).length;
-        const finalRound=Math.ceil(Math.log2(Math.max(2,entrantCount)));
-        if(loseKey&&g.round<finalRound)enqueueLowerLosers(p,[loseKey]);
-      }
-      advanceTournament(p);
-    }
-    if(p.tournament.finished&&!lowerRoundRunning(p)&&!(p.tournament.lowerBracket.waiting||[]).length)p.status='finished';
-  } else if(!(p.games||[]).some(x=>x.status==='running')) p.status='lobby';
-  broadcastParty(p);
-}
-function partyStart(s,p) {
-  if(p.host!==pkey(s))return s.emit('room:error',{message:'Nur der Party-Leiter darf starten oder Einstellungen ändern.'});
-  if(p.players.length<2)return s.emit('room:error',{message:'Mindestens zwei Spieler werden benötigt.'});
-  if((p.games||[]).some(g=>g.status==='running') || (p.mode==='ffa'&&p.ffa&&!p.ffa.winner))return s.emit('room:error',{message:'In dieser Party läuft bereits ein Spiel. Beende es zuerst.'});
-  if(p.mode==='normal') {
-    const pairs=validPairings(p,p.pairings||[])||[];
-    const chosen=pairs.length?pairs:[];
-    const used=new Set();
-    for(const pair of chosen) { if(pair.some(k=>used.has(k))) continue;pair.forEach(k=>used.add(k));createPartyGame(p,[pair[0]],[pair[1]],'normal'); }
-    if(!chosen.length) {
-      const free=partyMemberKeys(p);
-      for(let i=0;i+1<free.length;i+=2) createPartyGame(p,[free[i]],[free[i+1]],'normal');
-    }
-    p.status='running';broadcastParty(p);return;
-  }
-  if(p.mode==='tournament') {
-    if(!p.tournamentPreview)return s.emit('room:error',{message:'Bitte zuerst den Turnierbaum auslosen und ansehen.'});
-    if(!makeTournament(p)) return s.emit('room:error',{message:'Für ein Turnier werden mindestens zwei Spieler benötigt.'});
-    return;
-  }
-  if(p.mode==='team') {
-    const w=(p.teams&&p.teams.w||[]).filter(k=>partyMemberKeys(p).includes(k));
-    const b=(p.teams&&p.teams.b||[]).filter(k=>partyMemberKeys(p).includes(k));
-    if(!w.length||!b.length||w.some(k=>b.includes(k)))return s.emit('room:error',{message:'Bitte mindestens einen Spieler jedem Team zuweisen.'});
-    const g=createPartyGame(p,w,b,'team');p.status='running';broadcastParty(p);return;
-  }
-  if(p.mode==='ffa') {
-    if(p.players.length<2)return s.emit('room:error',{message:'Für Alle gegen Alle werden mindestens zwei Spieler benötigt.'});
-    const preview=createFFAState(p),sideCounts=[0,1,2,3].map(side=>preview.players.filter(x=>x.sideIndex===side).length);
-    if(sideCounts.some(count=>count>4))return s.emit('room:error',{message:'Auf jeder Brettseite können höchstens vier Spieler starten. Bitte verteile die Spieler auf mehr Seiten.'});
-    const state=preview;
-    p.ffa=state;p.status='running';
-    io.to('party:'+p.code).emit('ffa:start',ffaPublic(state));
-    broadcastParty(p);return;
-  }
-  s.emit('room:error',{message:'Unbekannter Spielmodus.'});
-}
-function ffaPublic(f) {
-  if(!f)return null;
-  return {size:f.size,depth:f.depth,centerSize:f.centerSize||8,pieceCount:f.pieceCount||16,board:f.board,cells:f.cells||null,layout:f.layout||'legacy',players:f.players.map(x=>({...x,connected:!(f.offline||[]).includes(x.key)})),order:f.order,alive:f.alive,turn:f.turn,turnKey:f.order[f.turn]||null,winner:f.winner||null,winnerTeam:f.winnerTeam||null,coWinners:f.coWinners||[],moves:f.moves||0,lastMove:f.lastMove||null};
-}
-// Vierseitiges Brett exakt nach dem Foto: 8x8-Mittelfeld und vier 2x8-Startarme.
-// Jeder Spieler startet mit einer vollständigen 8er-Grundreihe plus 8 Bauern.
-const FFA_CENTER_SIZE=8;
-const FFA_BACK_RANK=['R','N','B','Q','K','B','N','R'];
-const FFA_PAWN_RANK=Array(8).fill('P');
-const FFA_SIDES=[
-  {id:'top',color:'#f4b51b',forward:{x:0,y:1}},       // Gelb
-  {id:'right',color:'#16b978',forward:{x:-1,y:0}},   // Grün
-  {id:'bottom',color:'#2854b8',forward:{x:0,y:-1}},  // Blau
-  {id:'left',color:'#d62828',forward:{x:1,y:0}}     // Rot
-];
-function createFFAState(p) {
-  const members=p.players||[],sideOf=new Map(),groups=new Map();
-  const explicitlyUsed=new Set(members.map(m=>p.ffaTeams&&p.ffaTeams[m.key]&&p.ffaTeams[m.key]!=='solo'?Math.max(0,Math.min(3,Number(p.ffaTeams[m.key])-1)):null).filter(x=>x!==null));
-  const soloMembers=members.filter(m=>!(p.ffaTeams&&p.ffaTeams[m.key]&&p.ffaTeams[m.key]!=='solo'));
-  const freeSides=[0,1,2,3].filter(side=>!explicitlyUsed.has(side));
-  const naturalSeats=soloMembers.length===2?[0,2]:soloMembers.length===3?[0,1,2]:[0,1,2,3];
-  const soloSeats=explicitlyUsed.size?(freeSides.length?freeSides:[0,1,2,3]):naturalSeats;
-  let soloIndex=0;
-  members.forEach(m=>{
-    const assigned=p.ffaTeams&&p.ffaTeams[m.key];
-    const sideIndex=assigned&&assigned!=='solo'?Math.max(0,Math.min(3,Number(assigned)-1)):soloSeats[soloIndex++%soloSeats.length];
-    sideOf.set(m.key,sideIndex);
-    if(!groups.has(sideIndex))groups.set(sideIndex,[]);
-    groups.get(sideIndex).push(m);
-  });
-  const maxPerSide=Math.max(1,...[0,1,2,3].map(side=>(groups.get(side)||[]).length));
-  // Zwei Reihen pro Spieler, außerhalb des zentralen 8x8-Feldes.
-  const depth=maxPerSide*2,size=FFA_CENTER_SIZE+depth*2,board=Array(size*size).fill(null);
-  const cells=Array(size*size).fill(false);
-  for(let y=0;y<size;y++)for(let x=0;x<size;x++){
-    const inCenter=x>=depth&&x<depth+FFA_CENTER_SIZE&&y>=depth&&y<depth+FFA_CENTER_SIZE;
-    const inTopBottom=x>=depth&&x<depth+FFA_CENTER_SIZE&&(y<depth||y>=depth+FFA_CENTER_SIZE);
-    const inLeftRight=y>=depth&&y<depth+FFA_CENTER_SIZE&&(x<depth||x>=depth+FFA_CENTER_SIZE);
-    cells[y*size+x]=inCenter||inTopBottom||inLeftRight;
-  }
-  const players=members.map(m=>{
-    const assigned=p.ffaTeams&&p.ffaTeams[m.key],sideIndex=sideOf.get(m.key),side=FFA_SIDES[sideIndex];
-    const sideMembers=groups.get(sideIndex)||[],sideSlot=sideMembers.findIndex(x=>x.key===m.key);
-    const teamId=assigned&&assigned!=='solo'?'team-'+assigned:'solo-'+m.key;
-    return {key:m.key,name:m.name,color:side.color,side:side.id,sideIndex,sideSlot,forward:{...side.forward},alive:true,teamId,teamName:assigned&&assigned!=='solo'?'Gruppe '+assigned:m.name};
-  });
-  const place=(x,y,piece)=>{if(x>=0&&x<size&&y>=0&&y<size&&cells[y*size+x])board[y*size+x]=piece;};
-  players.forEach(pl=>{
-    const outer=pl.sideSlot*2,inner=outer+1;
-    for(let k=0;k<FFA_CENTER_SIZE;k++){
-      const major=FFA_BACK_RANK[k],pawn=FFA_PAWN_RANK[k];
-      if(pl.side==='top'){
-        place(depth+k,outer,{type:major,owner:pl.key});
-        place(depth+k,inner,{type:pawn,owner:pl.key});
-      } else if(pl.side==='bottom'){
-        place(depth+k,size-1-outer,{type:major,owner:pl.key});
-        place(depth+k,size-2-outer,{type:pawn,owner:pl.key});
-      } else if(pl.side==='left'){
-        place(outer,depth+k,{type:major,owner:pl.key});
-        place(inner,depth+k,{type:pawn,owner:pl.key});
-      } else {
-        place(size-1-outer,depth+k,{type:major,owner:pl.key});
-        place(size-2-outer,depth+k,{type:pawn,owner:pl.key});
-      }
-    }
-  });
-  return {layout:'cross',centerSize:FFA_CENTER_SIZE,pieceCount:16,size,depth,cells,board,players,order:players.map(x=>x.key),alive:players.map(x=>x.key),offline:[],turn:0,winner:null,moves:0,lastMove:null};
-}
-
-function ffaPathClear(f,fx,fy,tx,ty) {
-  const {board,size:n,cells}=f,dx=Math.sign(tx-fx),dy=Math.sign(ty-fy);let x=fx+dx,y=fy+dy;
-  while(x!==tx||y!==ty){const at=y*n+x;if((cells&&!cells[at])||board[at])return false;x+=dx;y+=dy;}
-  return true;
-}
-function areFFAAllies(f,a,b) {
-  const pa=(f.players||[]).find(x=>x.key===a),pb=(f.players||[]).find(x=>x.key===b);
-  return !!pa&&!!pb&&pa.teamId===pb.teamId;
-}
-function ffaWinner(f) {
-  if(!f||!f.alive.length)return null;
-  const groups=[...new Set(f.alive.map(k=>(f.players.find(x=>x.key===k)||{}).teamId||k))];
-  return groups.length===1?{key:f.alive[0],teamId:groups[0],coWinners:[...f.alive]}:null;
-}
-function ffaFinishIfDone(p) {
-  const f=p&&p.ffa;if(!f||f.winner)return false;
-  const result=ffaWinner(f);if(!result)return false;
-  f.winner=result.key;f.winnerTeam=result.teamId;f.coWinners=result.coWinners;p.status='finished';
-  const winner=f.players.find(x=>x.key===result.key);
-  io.to('party:'+p.code).emit('ffa:finished',{winner:f.winner,name:winner&&winner.teamName||winner&&winner.name,teamId:f.winnerTeam,coWinners:f.coWinners.map(k=>f.players.find(x=>x.key===k)?.name||k)});
-  return true;
-}
-function ffaLegal(f,key,from,to) {
-  const n=f.size,board=f.board;
-  if(!Number.isInteger(from)||!Number.isInteger(to)||from<0||to>=n*n||from===to)return false;
-  if(f.cells&&(!f.cells[from]||!f.cells[to]))return false;
-  const piece=board[from],target=board[to];if(!piece||piece.owner!==key||target&&(target.owner===key||areFFAAllies(f,key,target.owner)))return false;
-  const fx=from%n,fy=Math.floor(from/n),tx=to%n,ty=Math.floor(to/n),dx=tx-fx,dy=ty-fy,ax=Math.abs(dx),ay=Math.abs(dy),t=piece.type;
-  if(t==='N')return (ax===1&&ay===2)||(ax===2&&ay===1);
-  if(t==='K')return Math.max(ax,ay)===1;
-  if(t==='P') {
-    const pl=f.players.find(x=>x.key===key),vx=pl.forward.x,vy=pl.forward.y;
-    if(!target)return dx===vx&&dy===vy;
-    const px=-vy,py=vx;
-    return (dx===vx+px&&dy===vy+py)||(dx===vx-px&&dy===vy-py);
-  }
-  const straight=dx===0||dy===0,diag=ax===ay;
-  if(t==='R'&&!straight || t==='B'&&!diag || t==='Q'&&!straight&&!diag)return false;
-  return ffaPathClear(f,fx,fy,tx,ty);
-}
-function ffaNext(f) {
-  if(!f.alive.length)return;
-  for(let i=0;i<f.order.length;i++){f.turn=(f.turn+1)%f.order.length;const k=f.order[f.turn];if(f.alive.includes(k)&&!(f.offline||[]).includes(k))return;}
-}
-function ffaEliminate(p,key) {
-  const f=p&&p.ffa;if(!f||!f.alive.includes(key))return;
-  f.alive=f.alive.filter(k=>k!==key);f.board=f.board.map(x=>x&&x.owner===key?null:x);f.offline=(f.offline||[]).filter(k=>k!==key);
-  if(f.order[f.turn]===key)ffaNext(f);
-  ffaFinishIfDone(p);
-  io.to('party:'+p.code).emit('ffa:state',ffaPublic(f));saveParties();
-}
-function ffaMove(p,s,d) {
-  const f=p.ffa,key=pkey(s);
-  if(!f||f.winner||f.order[f.turn]!==key||!ffaLegal(f,key,Number(d&&d.from),Number(d&&d.to)))return false;
-  const piece=f.board[d.from],target=f.board[d.to];
-  const moveNumber=(f.moves||0)+1;
-  f.lastMove={from:Number(d.from),to:Number(d.to),by:key,piece:piece.type,captured:target?{type:target.type,owner:target.owner}:null,number:moveNumber};
-  f.board[d.to]=piece;f.board[d.from]=null;f.moves=moveNumber;
-  if(target&&target.type==='K') {
-    f.alive=f.alive.filter(k=>k!==target.owner);
-    f.board=f.board.map(x=>x&&x.owner===target.owner?null:x);
-  }
-  if(!ffaFinishIfDone(p))ffaNext(f);
-  io.to('party:'+p.code).emit('ffa:state',ffaPublic(f));
-  saveParties();return true;
-}
-
-// Serverseitige klassische Schachprüfung. Die Oberfläche bleibt für Darstellung und Eingabe zuständig.
-const CH_N=[[ -2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
-const CH_D=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
-const chWhite=p=>!!p && p===p.toUpperCase();
-const chInside=(r,c)=>r>=0&&r<8&&c>=0&&c<8;
-function chAttacked(b,s,byWhite) {
-  const r=s>>3,c=s&7,g=(y,x)=>chInside(y,x)?b[y*8+x]:'';
-  const pr=byWhite?r+1:r-1,P=byWhite?'P':'p',N=byWhite?'N':'n',K=byWhite?'K':'k';
-  if(g(pr,c-1)===P||g(pr,c+1)===P)return true;
-  for(const [y,x] of CH_N)if(g(r+y,c+x)===N)return true;
-  for(const [y,x] of CH_D)if(g(r+y,c+x)===K)return true;
-  for(let i=0;i<8;i++){let y=r+CH_D[i][0],x=c+CH_D[i][1];while(chInside(y,x)){const q=b[y*8+x];if(q){if(chWhite(q)===byWhite){const t=q.toLowerCase();if(t==='q'||(i<4?t==='r':t==='b'))return true;}break;}y+=CH_D[i][0];x+=CH_D[i][1];}}
-  return false;
-}
-function chPseudo(g) {
-  const b=g.board,w=g.turn==='w',out=[];
-  for(let s=0;s<64;s++){const p=b[s];if(!p||chWhite(p)!==w)continue;const t=p.toLowerCase(),r=s>>3,c=s&7,add=(to,x={})=>out.push({from:s,to,...x});
-    if(t==='p'){const d=w?-1:1,last=r+d===(w?0:7),addP=(to,x={})=>{if(last)for(const pr of ['q','r','b','n'])add(to,{...x,promotion:pr});else add(to,x);};
-      if(!b[s+d*8]){addP(s+d*8);if(r===(w?6:1)&&!b[s+d*16])add(s+d*16,{double:true});}
-      for(const dc of [-1,1]){const x=c+dc;if(x<0||x>7)continue;const to=s+d*8+dc;if(b[to]&&chWhite(b[to])!==w)addP(to);else if(to===g.ep)add(to,{ep:true});}
-    } else if(t==='n'||t==='k'){
-      for(const [dy,dx] of (t==='n'?CH_N:CH_D)){const y=r+dy,x=c+dx;if(!chInside(y,x))continue;const q=b[y*8+x];if(!q||chWhite(q)!==w)add(y*8+x);}
-      if(t==='k' && s===(w?60:4) && !chAttacked(b,s,!w)) {
-        const row=w?7:0,rights=g.castling||'KQkq',short=w?'K':'k',long=w?'Q':'q';
-        if(rights.includes(short)&&!b[row*8+5]&&!b[row*8+6]&&!chAttacked(b,row*8+5,!w)&&!chAttacked(b,row*8+6,!w))add(row*8+6,{castle:'K'});
-        if(rights.includes(long)&&!b[row*8+1]&&!b[row*8+2]&&!b[row*8+3]&&!chAttacked(b,row*8+3,!w)&&!chAttacked(b,row*8+2,!w))add(row*8+2,{castle:'Q'});
-      }
-    } else {for(let i=t==='b'?4:0;i<(t==='r'?4:8);i++){let y=r+CH_D[i][0],x=c+CH_D[i][1];while(chInside(y,x)){const q=b[y*8+x];if(q){if(chWhite(q)!==w)add(y*8+x);break;}add(y*8+x);y+=CH_D[i][0];x+=CH_D[i][1];}}}
-  }
-  return out;
-}
-function chApply(g,m) {
-  const b=g.board.slice(),p=b[m.from],w=chWhite(p),cap=b[m.to];
-  b[m.to]=m.promotion?(w?m.promotion.toUpperCase():m.promotion):p;b[m.from]='';
-  if(m.ep)b[m.to+(w?8:-8)]='';
-  if(m.castle==='K'){const row=w?7:0;b[row*8+5]=w?'R':'r';b[row*8+7]='';}
-  if(m.castle==='Q'){const row=w?7:0;b[row*8+3]=w?'R':'r';b[row*8]='';}
-  let castling=g.castling||'KQkq';
-  const cr={0:['q'],7:['k'],56:['Q'],63:['K'],4:['k','q'],60:['K','Q']};
-  for(const sq of [m.from,m.to])if(cr[sq])for(const right of cr[sq])castling=castling.replace(right,'');
-  return {...g,board:b,turn:other(g.turn),ep:m.double?(m.from+m.to)/2:-1,castling,halfmove:(p.toLowerCase()==='p'||cap||m.ep)?0:(g.halfmove||0)+1};
-}
-function chLegal(g) {
-  const w=g.turn==='w';
-  return chPseudo(g).filter(m=>{if(g.board[m.to]&&g.board[m.to].toLowerCase()==='k')return false;const n=chApply(g,m),k=n.board.indexOf(w?'K':'k');return k>=0&&!chAttacked(n.board,k,!w);});
-}
-function chApplyMove(g,d) {
-  const m=chLegal(g).find(x=>x.from===Number(d.from)&&x.to===Number(d.to)&&(!x.promotion||(x.promotion===(d.promotion||'q'))));
-  return m?{state:chApply(g,m),move:m}:null;
-}
-function chPositionKey(g) { return (g.board||[]).map(x=>x||'-').join('')+(g.turn||'w')+(g.castling||'KQkq')+(g.ep??-1); }
-function serverGameEnd(g,repeated=false) {
-  if(!g || !Array.isArray(g.board))return null;
-  const legal=chLegal(g);
-  if(!legal.length){const side=g.turn,k=g.board.indexOf(side==='w'?'K':'k');return k>=0&&chAttacked(g.board,k,side==='b')?{winner:other(side),reason:'Schachmatt'}:{winner:null,reason:'Patt'};}
-  const nonKings=g.board.filter(x=>x&&x.toLowerCase()!=='k');
-  if(!nonKings.length||(nonKings.length===1&&'bn'.includes(nonKings[0].toLowerCase())))return {winner:null,reason:'Remis · unzureichendes Material'};
-  if((g.halfmove||0)>=100)return {winner:null,reason:'Remis · 50-Züge-Regel'};
-  if(repeated)return {winner:null,reason:'Remis · Stellungswiederholung'};
-  return null;
-}
+const code6 = () => { let c; do { c = String(100000 + Math.floor(Math.random() * 900000)); } while (rooms.has(c)); return c; };
 
 // ---- Konten (Datei oder dauerhaft über Upstash Redis) ----
 const crypto = require('crypto');
-const FILE = path.join(DIR, 'users.json');
+const DIR = process.env.DATA_DIR || path.join(__dirname, 'data'), FILE = path.join(DIR, 'users.json');
 const clean = v => String(v || '').trim().replace(/^["']|["']$/g, '').trim();
 let UP = clean(process.env.UPSTASH_REDIS_REST_URL).replace(/\/+$/, '');
 const UT = clean(process.env.UPSTASH_REDIS_REST_TOKEN);
@@ -647,6 +46,7 @@ const SHOP = { fire: 300, bolt: 400, ice: 250, gold: 350, neon: 300, rainbow: 60
 const THI = { 5: 'lava', 6: 'storm', 7: 'night', 8: 'ocean', 9: 'forest', 10: 'rose', 11: 'galaxy' };   // Brett-Index -> Shop-Artikel
 const COMP = { win: 'loss', loss: 'win', draw: 'draw' };
 const KEY = 'chess:users';
+const PARTY_KEY = 'chess:parties';
 // Stabiler HMAC-Schlüssel: wichtig, damit gespeicherte Bestenlisten-Einträge
 // nach einem Server-Neustart weiterhin geprüft und wiederhergestellt werden können.
 // Reihenfolge: eigener Schlüssel, Render-Service-ID, Upstash-Token oder lokale Schlüsseldatei.
@@ -714,7 +114,10 @@ async function flush() {
     timer = setTimeout(flush, 15000);
   }
 }
-process.on('SIGTERM', async () => { await Promise.race([Promise.all([flush(), flushParties()]), new Promise(r => setTimeout(r, 8000))]); process.exit(0); });   // Render beendet den Server: vorher noch speichern
+process.on('SIGTERM', async () => {
+  await Promise.race([Promise.all([flush(), persistPartiesNow()]), new Promise(r => setTimeout(r, 8000))]);
+  process.exit(0);
+});   // Render beendet den Server: Konten und Partys vorher speichern
 
 const hx = s => String(s).replace(/[&<>"]/g, c => '&#' + c.charCodeAt(0) + ';');
 const storageText = () => USE_UP ? (dbOk ? 'Upstash (dauerhaft)' : 'Upstash FEHLER: ' + dbError) : process.env.DATA_DIR ? 'Datenträger' : 'Datei (geht bei Neustart verloren)';
@@ -745,150 +148,91 @@ const av = x => (x.data.user && x.data.user.av) | 0;
 const pn = o => ({ w: Number(o && o.w) | 0, b: Number(o && o.b) | 0 }), ps = o => ({ w: String((o && o.w) || '').slice(0, 12), b: String((o && o.b) || '').slice(0, 12) });
 const cleanPresets = a => (Array.isArray(a) ? a : []).slice(0, 8).map(p => ({ n: String((p && p.n) || 'Preset').slice(0, 14), th: pn(p && p.th), col: ps(p && p.col), ef: ps(p && p.ef) }));
 
-// Online-Schachuhren werden ausschließlich auf dem Server berechnet.
-const otherSide = side => side === 'w' ? 'b' : 'w';
-function clockView(r, now = Date.now()) {
-  const c = r.clock;
-  if (!c) return null;
-  const remaining = { ...c.remaining };
-  if (!c.ended) remaining[c.turn] = Math.max(0, remaining[c.turn] - Math.max(0, now - c.lastAt));
-  return { remaining, turn: c.turn, serverNow: now };
-}
-function timeoutWinner(r, loser) {
-  const winner=otherSide(loser),pieces=(r.board||[]).filter(p=>p&&chWhite(p)===(winner==='w')).map(p=>p.toLowerCase()).filter(p=>p!=='k');
-  if(!pieces.length)return null;
-  if(pieces.some(p=>['p','r','q'].includes(p)))return winner;
-  const bishops=pieces.filter(p=>p==='b').length,knights=pieces.filter(p=>p==='n').length;
-  if(bishops>=2 || (bishops>=1&&knights>=1))return winner;
-  return null; // Nur König oder nur ein Läufer/Springer: kein erzwungen möglicher Mattweg.
-}
-function finishTimeout(r, now = Date.now()) {
-  const c = r.clock;
-  if (!c || c.ended) return;
-  const loser = c.turn, winner = timeoutWinner(r,loser);
-  c.remaining[loser] = 0;
-  c.lastAt = now;
-  c.ended = true;
-  clearTimeout(c.timer);
-  c.timer = null;
-
-  // Erst das Spielergebnis senden: Die Oberfläche kann Elo aktualisieren,
-  // danach überschreibt profile:update es mit dem verbindlichen Serverwert.
-  io.to(r.code).emit('game:timeout', { win: winner, draw:!winner, clock: clockView(r, now) });
-  if (r.kind === 'party-game' || r.kind === 'team') finishPartyGame(r, winner, winner?'Zeit abgelaufen':'Zeit abgelaufen · Remis wegen unzureichenden Mattmaterials');
+// Spieler aus Warteschlange und Raum entfernen, Gegner informieren
+function leave(s, explicit = false) {
+  queue = queue.filter(q => q.id !== s.id);
+  const code = s.data.room;
+  if (!code) return;
+  s.data.room = null;
+  s.leave(code);
+  const r = rooms.get(code);
+  if (!r) return;
+  if (r.kind === 'party') {
+    const p = r.players.find(x => x.id === s.id);
+    if (p) {
+      p.id = null;
+      p.connected = false;
+      p.lastSeen = Date.now();
+      if (explicit) {
+        r.teams = r.teams || { w: [], b: [] };
+        // Team-Partien bleiben offen: der Leiter kann den freien Platz mit
+        // einem anderen Party-Mitglied besetzen. Einzelpartien werden gewertet.
+        r.teams.w = (r.teams.w || []).filter(k => k !== p.key);
+        r.teams.b = (r.teams.b || []).filter(k => k !== p.key);
+        for (const g of Object.values(r.matches || {})) {
+          if (g.status !== 'playing') continue;
+          if (g.kind === 'team') {
+            const side = g.white.includes(p.key) ? 'w' : g.black.includes(p.key) ? 'b' : null;
+            if (side) {
+              const roster = side === 'w' ? g.white : g.black;
+              // Entferne nur dann sofort, wenn noch ein Teammitglied übrig ist.
+              // Bei letzter Person bleibt der Platz reserviert, bis der Leiter ersetzt.
+              if (roster.length > 1) {
+                const oldIndex = roster.indexOf(p.key);
+                roster.splice(oldIndex, 1);
+                const next = g.turnIndex[side] || 0;
+                g.turnIndex[side] = roster.length ? Math.max(0, next - (oldIndex < next ? 1 : 0)) % roster.length : 0;
+              }
+              notifyPartyGameUpdate(r, g);
+            }
+          } else if (g.white.includes(p.key)) finishPartyMatch(r, g, 'b', 'Spieler hat die Party verlassen');
+          else if (g.black.includes(p.key)) finishPartyMatch(r, g, 'w', 'Spieler hat die Party verlassen');
+        }
+        if (r.ffa && !r.ffa.over && ffaOwnerAlive(r.ffa, p.key)) {
+          const f = r.ffa, victim = f.players.find(x => x.key === p.key);
+          if (victim) victim.alive = false;
+          f.board = f.board.map(piece => piece && piece.owner === p.key ? null : piece);
+          const oldOrder = f.order.slice(), oldTurnKey = f.order[f.turnIndex];
+          f.order = f.order.filter(k => k !== p.key);
+          if (f.order.length <= 1) { f.over = true; f.winner = f.order[0] || null; }
+          else if (oldTurnKey === p.key) {
+            const nextKey = oldOrder.slice(f.turnIndex + 1).concat(oldOrder.slice(0, f.turnIndex)).find(k => f.order.includes(k));
+            f.turnIndex = Math.max(0, f.order.indexOf(nextKey));
+          } else f.turnIndex = Math.max(0, f.order.indexOf(oldTurnKey));
+          sendFFA(r);
+        }
+        r.players = r.players.filter(x => x.key !== p.key);
+      }
+      if (r.host === p.key && explicit) r.host = r.players.find(x => x.connected)?.key || (r.players[0] ? r.players[0].key : null);
+    }
+    if (!r.players.length) rooms.delete(code);
+    else {
+      // Laufende Spiele bleiben bestehen. Bei Verbindungsabbruch kann derselbe
+      // Account mit seinem Namen wieder beitreten.
+      if (explicit && !r.players.length) rooms.delete(code);
+      else emitParty(r);
+    }
+    saveParties();
+    return;
+  }
   if (r.kind === 'match' && (r.moves || 0) >= 8 && !r.done) {
-    r.res[r.w] = !winner ? 'draw' : winner === 'w' ? 'win' : 'loss';
-    r.res[r.b] = !winner ? 'draw' : winner === 'b' ? 'win' : 'loss';
+    const oid = s.id === r.w ? r.b : r.w;
+    if (!r.res[s.id]) r.res[s.id] = r.res[oid] ? COMP[r.res[oid]] : 'loss';
+    if (!r.res[oid]) r.res[oid] = COMP[r.res[s.id]];
     settle(r);
   }
-}
-function checkClock(r, now = Date.now()) {
-  const c = r.clock;
-  if (!c || c.ended) return true;
-  const elapsed = Math.max(0, now - c.lastAt);
-  c.remaining[c.turn] = Math.max(0, c.remaining[c.turn] - elapsed);
-  c.lastAt = now;
-  if (c.remaining[c.turn] <= 0) {
-    finishTimeout(r, now);
-    return true;
+  rooms.delete(code);
+  for (const id of [r.w, r.b]) {
+    const o = id && id !== s.id && sock(id);
+    if (o && o.data.room === code) { o.data.room = null; o.leave(code); o.emit('opponent:left'); }
   }
-  return false;
-}
-function scheduleClock(r) {
-  const c = r.clock;
-  if (!c || c.ended) return;
-  clearTimeout(c.timer);
-  const delay = Math.max(0, c.remaining[c.turn] - Math.max(0, Date.now() - c.lastAt));
-  c.timer = setTimeout(() => {
-    if (!checkClock(r)) scheduleClock(r);
-  }, delay + 5);
 }
 
-// Spieler aus Warteschlange und Raum entfernen, Gegner informieren
-function leave(s, permanent = false) {
-  queue = queue.filter(q => q.id !== s.id);
-  const code=s.data.room, r=code&&rooms.get(code);
-  if (code) {
-    s.data.room=null; s.leave(code);
-    if (r && (r.kind === 'party-game' || r.kind === 'team')) {
-      const key=pkey(s), side=(r.whiteKeys||[]).includes(key)?'w':(r.blackKeys||[]).includes(key)?'b':null;
-      if(permanent && side) {
-        if(r.kind==='team') {
-          r.teamIndex=r.teamIndex||{w:0,b:0};
-          for(const teamSide of ['w','b']) {
-            const prop=teamSide==='w'?'whiteKeys':'blackKeys',oldList=r[prop]||[];
-            const oldIndex=oldList.length?(r.teamIndex[teamSide]||0)%oldList.length:0;
-            const activeKey=oldList[oldIndex];
-            r[prop]=oldList.filter(k=>k!==key);
-            const nextIndex=r[prop].indexOf(activeKey);
-            r.teamIndex[teamSide]=activeKey===key?0:(nextIndex>=0?nextIndex:0);
-          }
-          // Ein freier Team-Slot darf durch den Leiter ersetzt werden; die Partie bleibt bis dahin offen.
-          const p0=parties.get(r.party);if(p0){r.teamIndex.w=partyTeamIndex(p0,r,'w');r.teamIndex.b=partyTeamIndex(p0,r,'b');io.to(r.code).emit('game:turn',partyTurnView(p0,r));io.to('party:'+p0.code).emit('party:state',partySnapshot(p0));}
-        } else finishPartyGame(r,other(side),'Spieler hat die Party verlassen');
-      } else io.to(code).emit('game:player-offline',{name:s.data.user&&s.data.user.name||'Spieler'});
-    } else if (r) {
-      if (r.clock) { r.clock.ended=true; clearTimeout(r.clock.timer); r.clock.timer=null; }
-      if (r.kind === 'match' && (r.moves || 0) >= 8 && !r.done) {
-        const oid=s.id===r.w?r.b:r.w;
-        if (!r.res[s.id]) r.res[s.id]=r.res[oid]?COMP[r.res[oid]]:'loss';
-        if (!r.res[oid]) r.res[oid]=COMP[r.res[s.id]];
-        settle(r);
-      }
-      rooms.delete(code);
-      for (const id of [r.w,r.b]) {
-        const o=id&&id!==s.id&&sock(id);
-        if(o&&o.data.room===code){o.data.room=null;o.leave(code);o.emit('opponent:left');}
-      }
-    }
-  }
-  const pc=s.data.party;
-  if(pc) {
-    const p=parties.get(pc),key=pkey(s);
-    if(p) {
-      const m=partyPlayer(p,key);
-      if(m && !( !permanent && m.socketId && m.socketId!==s.id)) {
-        m.connected=false;m.socketId=null;
-        if(!permanent) {
-          for(const g of (p.games||[]).filter(x=>x.status==='running'&&x.kind==='team')) {
-            const side=(g.whiteKeys||[]).includes(key)?'w':(g.blackKeys||[]).includes(key)?'b':null;
-            if(side) {
-              const arr=side==='w'?g.whiteKeys:g.blackKeys;
-              const current=arr.length?arr[(g.teamIndex[side]||0)%arr.length]:null;
-              if(current===key) {
-                g.teamIndex[side]=partyTeamIndex(p,g,side);
-                io.to(g.code).emit('game:turn',partyTurnView(p,g));
-              }
-            }
-          }
-          if(p.ffa && p.ffa.alive.includes(key)){p.ffa.offline=p.ffa.offline||[];if(!p.ffa.offline.includes(key))p.ffa.offline.push(key);if(p.ffa.order[p.ffa.turn]===key)ffaNext(p.ffa);io.to('party:'+p.code).emit('ffa:state',ffaPublic(p.ffa));}
-        }
-        if(permanent) {
-          if(p.ffa)ffaEliminate(p,key);
-          p.players=p.players.filter(x=>x.key!==key);
-          p.pairings=(p.pairings||[]).filter(pair=>!pair.includes(key));
-          if(Array.isArray(p.tournamentPlayers))p.tournamentPlayers=p.tournamentPlayers.filter(x=>x!==key);
-          if(p.teams){p.teams.w=(p.teams.w||[]).filter(x=>x!==key);p.teams.b=(p.teams.b||[]).filter(x=>x!==key);}
-          if(p.host===key){p.host=(p.players.find(x=>x.connected)||p.players[0]||{}).key||null;}
-        }
-      }
-      if(permanent)s.leave('party:'+pc);
-      broadcastParty(p);
-    }
-    if(permanent)s.data.party=null;
-  }
-}
 function start(r) {
   const a = sock(r.w), b = sock(r.b);
   if (!a || !b) return;
-  const now = Date.now(), ms = (r.tc || 5) * 60000;
-  r.board = r.board || startBoard(); r.turn = 'w'; r.castling = r.castling || 'KQkq'; r.ep = r.ep ?? -1;
-  r.halfmove = r.halfmove || 0; r.history = r.history || []; r.moves = r.moves || 0; r.positions=r.positions||{[chPositionKey(r)]:1};
-  r.clock = { remaining: { w: ms, b: ms }, turn: 'w', lastAt: now, ended: false, timer: null };
-  scheduleClock(r);
-  const clock = clockView(r, now);
-  a.emit('game:start', { code: r.code, side: 'w', kind: r.kind, tc: r.tc || 5, clock, canMove:true, opp: { e: b.data.elo, n: nm(b), a: av(b) } });
-  b.emit('game:start', { code: r.code, side: 'b', kind: r.kind, tc: r.tc || 5, clock, canMove:true, opp: { e: a.data.elo, n: nm(a), a: av(a) } });
+  a.emit('game:start', { code: r.code, side: 'w', kind: r.kind, tc: r.tc || 5, opp: { e: b.data.elo, n: nm(b), a: av(b) } });
+  b.emit('game:start', { code: r.code, side: 'b', kind: r.kind, tc: r.tc || 5, opp: { e: a.data.elo, n: nm(a), a: av(a) } });
 }
 
 // Wertung: Elo und Münzen nur, wenn beide Spieler dasselbe Ergebnis melden (oder einer das Spiel verlässt)
@@ -920,35 +264,346 @@ function claim(r, s, res) {
 }
 
 const NAME_RE = /^[\wäöüÄÖÜß.-]{3,16}$/;
-const TCS = [1, 3, 5, 10];                       // Bedenkzeiten in Minuten
+const TCS = [1, 3, 5, 10, 15, 30];             // Bedenkzeiten in Minuten
 const BOT_R = [20, 60, 120, 250, 500];           // Gold beim ersten Sieg gegen Bot-Stufe 1 bis 5
 const byKey = {};                                // Name (klein) -> Sockets (für Online-Status)
 const invites = new Map();
 const low = u => u.name.toLowerCase();
-const tcOf = v => (TCS.includes(+v) ? +v : 5);
+const tcOf = v => (TCS.includes(+v) ? +v : int(v, 1, 180, 5));
 const int = (v, lo, hi, def) => Math.min(hi, Math.max(lo, Math.round(+v) || def));
 const onSocks = k => (byKey[k] || []).filter(x => x.connected !== false);
 const offline = s => { const u = s.data.user; if (!u) return; const a = byKey[low(u)]; if (a) { const i = a.indexOf(s); if (i >= 0) a.splice(i, 1); } };
-const friendRows = u => (u.fr || []).map(k => { const f = users[k]; if (!f) return null; const so = onSocks(k); return { n: f.name, e: f.elo, a: f.av | 0, on: so.length > 0, busy: so.length > 0 && so.every(x => x.data.room || x.data.party) }; }).filter(Boolean);
+const friendRows = u => (u.fr || []).map(k => { const f = users[k]; if (!f) return null; const so = onSocks(k); return { n: f.name, e: f.elo, a: f.av | 0, on: so.length > 0, busy: so.length > 0 && so.every(x => x.data.room) }; }).filter(Boolean);
 function newRoom(kind, tc, a, b) {
   const code = code6();
-  rooms.set(code, { code, kind, tc, w: a.id, b: b.id, res: {}, e: { [a.id]: a.data.elo, [b.id]: b.data.elo }, u: { [a.id]: a.data.user, [b.id]: b.data.user } });
+  rooms.set(code, { code, kind, tc, w: a.id, b: b.id, fen: new Chess().fen(), res: {}, e: { [a.id]: a.data.elo, [b.id]: b.data.elo }, u: { [a.id]: a.data.user, [b.id]: b.data.user } });
   for (const x of [a, b]) { x.data.room = code; x.join(code); }
   return rooms.get(code);
 }
 
+
+// ---- Mehrspieler-Partys: getrennte Matches, Turnier, Teams und FFA ----
+const PARTY_MODES = new Set(['normal', 'tournament', 'ffa', 'team']);
+const FFA_COLORS = ['#2979ff', '#ff1744', '#00c853', '#ff9100'];
+const FFA_BACK = 'rnbqkbnr';
+const idxSquare = i => 'abcdefgh'[i & 7] + String(8 - (i >> 3));
+const keyOf = name => String(name || '').trim().toLowerCase();
+const randomId = () => crypto.randomBytes(5).toString('hex');
+const shuffle = a => { const x = a.slice(); for (let i = x.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [x[i], x[j]] = [x[j], x[i]]; } return x; };
+const chessFrom = fen => { const c = new Chess(); if (fen) c.load(fen); return c; };
+const playerIn = (r, key) => r.players.find(p => p.key === key);
+const socketForKey = (r, key) => { const p = playerIn(r, key); return p && p.id ? sock(p.id) : null; };
+const currentSide = g => (g.fen || '').split(' ')[1] === 'b' ? 'b' : 'w';
+function partyClock(g, now = Date.now()) {
+  const side = currentSide(g);
+  if (g.status === 'playing' && g.clock && g.lastTick) {
+    const dt = Math.max(0, now - g.lastTick);
+    g.clock[side] = Math.max(0, g.clock[side] - dt);
+    g.lastTick = now;
+  }
+  return { w: Math.max(0, g.clock?.w || 0), b: Math.max(0, g.clock?.b || 0) };
+}
+function nextTeamActor(g, side) {
+  const team = side === 'w' ? g.white : g.black;
+  if (!team || !team.length) return null;
+  return team[(g.turnIndex[side] || 0) % team.length];
+}
+function publicMatch(r, g) {
+  const c = partyClock(g);
+  const side = currentSide(g), actor = nextTeamActor(g, side);
+  return {
+    id: g.id, kind: g.kind, status: g.status, time: g.tc, white: (g.white || []).map(k => playerIn(r, k)?.name || k),
+    black: (g.black || []).map(k => playerIn(r, k)?.name || k), whiteKeys: g.white, blackKeys: g.black,
+    fen: g.fen, moveCount: (g.moves || []).length, result: g.result || null, teamConfig: g.kind === 'team' ? (g.teamConfig || r.teamConfig) : null,
+    actor: playerIn(r, actor)?.name || actor, side, clock: c, round: g.round || 0
+  };
+}
+function publicFFA(r) {
+  const f = r.ffa;
+  if (!f) return null;
+  return {
+    size: f.size,
+    board: f.board.map(piece => piece ? {
+      owner: playerIn(r, piece.owner)?.name || piece.owner,
+      type: piece.type,
+      color: f.players.find(p => p.key === piece.owner)?.color || '#fff'
+    } : null),
+    players: f.players.map(p => ({ name: playerIn(r, p.key)?.name || p.key, color: p.color, alive: p.alive, direction: p.direction })),
+    order: f.order.slice(f.turnIndex).concat(f.order.slice(0, f.turnIndex)).map(k => playerIn(r, k)?.name || k),
+    turn: playerIn(r, f.order[f.turnIndex])?.name || f.order[f.turnIndex] || null,
+    over: !!f.over, winner: f.winner ? (playerIn(r, f.winner)?.name || f.winner) : null,
+    history: f.history.slice(-80)
+  };
+}
+function publicParty(r, viewer) {
+  const me = viewer && playerIn(r, viewer);
+  return {
+    code: r.code, host: r.host, me: viewer || null, isHost: !!(viewer && r.host === viewer), mode: r.mode,
+    settings: r.settings,
+    players: r.players.map(p => ({ name: p.name, key: p.key, elo: p.elo, avatar: p.avatar, connected: !!p.connected,
+      team: r.teams?.w?.includes(p.key) ? 'w' : r.teams?.b?.includes(p.key) ? 'b' : '' })),
+    pairings: r.pairings || [], teams: r.teams || { w: [], b: [] }, teamConfig: r.teamConfig || { wName: 'Team Weiß', bName: 'Team Schwarz', wColor: '#ffffff', bColor: '#1a1a1a' },
+    matches: Object.values(r.matches || {}).map(g => publicMatch(r, g)),
+    tournament: r.tournament ? { rounds: r.tournament.rounds, champion: r.tournament.champion, finished: !!r.tournament.finished, current: r.tournament.current } : null,
+    ffa: publicFFA(r), started: !!r.started, canStart: !!(me && r.host === viewer)
+  };
+}
+function emitParty(r) {
+  if (!r || r.kind !== 'party') return;
+  io.to(r.code).emit('room:state', { state: publicParty(r, null) });
+  saveParties();
+}
+function emitPartyTo(s, r, key) {
+  s.emit('room:state', { state: publicParty(r, key) });
+}
+function partySnapshot(r) {
+  return {
+    code: r.code, kind: 'party', host: r.host, mode: r.mode, settings: r.settings,
+    players: r.players.map(p => ({ ...p, id: null, connected: false })),
+    pairings: r.pairings || [], teams: r.teams || { w: [], b: [] }, teamConfig: r.teamConfig || { wName: 'Team Weiß', bName: 'Team Schwarz', wColor: '#ffffff', bColor: '#1a1a1a' }, matches: r.matches || {},
+    tournament: r.tournament || null, ffa: r.ffa || null, started: !!r.started, updatedAt: Date.now()
+  };
+}
+let partySaveTimer = null;
+async function persistPartiesNow() {
+  try {
+    const data = [...rooms.values()].filter(r => r.kind === 'party' && r.players?.length).map(partySnapshot);
+    if (USE_UP && dbOk) await up(['SET', PARTY_KEY, JSON.stringify(data)]);
+    else { fs.mkdirSync(DIR, { recursive: true }); fs.writeFileSync(path.join(DIR, 'parties.json.tmp'), JSON.stringify(data)); fs.renameSync(path.join(DIR, 'parties.json.tmp'), path.join(DIR, 'parties.json')); }
+  } catch (e) { console.error('Party-Speicherung fehlgeschlagen:', e.message); }
+}
+function saveParties() {
+  clearTimeout(partySaveTimer);
+  partySaveTimer = setTimeout(persistPartiesNow, 250);
+}
+async function loadParties() {
+  try {
+    let data = [];
+    if (USE_UP && dbOk) {
+      const raw = await up(['GET', PARTY_KEY]);
+      if (raw) data = JSON.parse(raw);
+    } else {
+      const file = path.join(DIR, 'parties.json');
+      if (fs.existsSync(file)) data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    }
+    for (const old of (Array.isArray(data) ? data : [])) {
+      if (!old || old.kind !== 'party' || !/^\d{6}$/.test(old.code) || !Array.isArray(old.players)) continue;
+      // Sehr alte, verlassene Lobbys werden nicht unbegrenzt wiederhergestellt.
+      if (Date.now() - (old.updatedAt || Date.now()) > 7 * 24 * 60 * 60 * 1000) continue;
+      old.players = old.players.map(p => ({ ...p, id: null, connected: false }));
+      old.matches = old.matches || {}; old.settings = old.settings || { time: 5 }; old.pairings = old.pairings || []; old.teams = old.teams || { w: [], b: [] }; old.teamConfig = old.teamConfig || { wName: 'Team Weiß', bName: 'Team Schwarz', wColor: '#ffffff', bColor: '#1a1a1a' };
+      for (const g of Object.values(old.matches)) if (g.status === 'playing') g.lastTick = Date.now();
+      rooms.set(old.code, old);
+    }
+  } catch (e) { console.error('Gespeicherte Partys konnten nicht geladen werden:', e.message); }
+}
+function addPartyPlayer(r, s, u) {
+  const key = keyOf(u.name);
+  let p = playerIn(r, key);
+  if (!p) {
+    if (r.players.length >= 16) return null;
+    p = { key, name: u.name, id: s.id, elo: u.elo || 300, avatar: u.av | 0, connected: true, joinedAt: Date.now() };
+    r.players.push(p);
+  } else {
+    if (p.id && p.id !== s.id) {
+      const old = sock(p.id);
+      if (old) { old.data.room = null; old.leave(r.code); offline(old); old.emit('room:error', { message: 'Dein Account wurde in dieser Party auf einem anderen Tab verbunden.' }); }
+    }
+    p.id = s.id; p.name = u.name; p.elo = u.elo || 300; p.avatar = u.av | 0; p.connected = true;
+  }
+  s.data.room = r.code; s.join(r.code);
+  return p;
+}
+function resumeParty(s, u) {
+  const key = keyOf(u.name);
+  for (const r of rooms.values()) {
+    if (r.kind !== 'party' || !playerIn(r, key)) continue;
+    const p = addPartyPlayer(r, s, u);
+    if (!p) return;
+    emitParty(r);
+    emitPartyTo(s, r, key);
+    const active = Object.values(r.matches || {}).find(g => g.status === 'playing' && [...g.white, ...g.black].includes(key));
+    if (active) sendPartyGameStart(s, r, active, key, false);
+    if (r.mode === 'ffa' && r.ffa && !r.ffa.over) s.emit('ffa:start', { state: publicFFA(r) });
+    return;
+  }
+}
+function notifyPartyGameUpdate(r, g, extra = {}) {
+  const side = currentSide(g), actor = nextTeamActor(g, side), clock = partyClock(g);
+  io.to(r.code).emit('party:game-update', { gameId: g.id, actor: playerIn(r, actor)?.name || actor, side, clock, status: g.status, result: g.result || null, teamConfig: g.kind === 'team' ? (g.teamConfig || r.teamConfig) : null, ...extra });
+}
+function sendPartyGameStart(s, r, g, key, spectator) {
+  const side = g.white.includes(key) ? 'w' : g.black.includes(key) ? 'b' : 's';
+  const opp = side === 'w' ? g.black : side === 'b' ? g.white : g.white;
+  const actor = nextTeamActor(g, currentSide(g));
+  const myTurn = !spectator && actor === key;
+  s.emit('game:start', {
+    code: r.code, side, kind: 'party', partyGameId: g.id, partyMode: g.kind, spectator: !!spectator,
+    tc: g.tc || r.settings.time, fen: g.fen, moves: g.moves || [], clock: partyClock(g), actor: playerIn(r, actor)?.name || actor, teamConfig: g.kind === 'team' ? (g.teamConfig || r.teamConfig) : null,
+    canMove: myTurn, finished: g.status === 'done', result: g.result || null, opp: { n: opp.map(k => playerIn(r, k)?.name || k).join(' + ') || 'Zuschauer', e: 0, a: 0 }
+  });
+}
+function makePartyMatch(r, white, black, meta = {}) {
+  const id = randomId(), minutes = Math.max(1, Math.min(180, +r.settings.time || 5)), chess = new Chess();
+  const g = {
+    id, kind: meta.kind || r.mode, round: meta.round || 0, bracketMatchId: meta.bracketMatchId || null, tc: minutes, teamConfig: (meta.kind || r.mode) === 'team' ? { ...r.teamConfig } : null,
+    white: white.slice(), black: black.slice(), fen: chess.fen(), moves: [], status: 'playing', result: null,
+    turnIndex: { w: 0, b: 0 }, clock: { w: minutes * 60000, b: minutes * 60000 }, lastTick: Date.now(), createdAt: Date.now()
+  };
+  r.matches[id] = g;
+  for (const key of [...white, ...black]) { const ps = socketForKey(r, key); if (ps) sendPartyGameStart(ps, r, g, key, false); }
+  notifyPartyGameUpdate(r, g);
+  return g;
+}
+function setTournamentWinner(r, g, winnerKey, reason) {
+  const t = r.tournament; if (!t) return;
+  const round = t.rounds[g.round] || [];
+  const m = round.find(x => x.gameId === g.id || x.id === g.bracketMatchId);
+  if (!m || m.winner) return;
+  if (!winnerKey) winnerKey = Math.random() < 0.5 ? g.white[0] : g.black[0];
+  m.winner = winnerKey; m.loser = m.w === winnerKey ? m.b : m.w;
+  m.result = reason || (winnerKey ? 'Sieg' : 'Remis'); m.status = 'done';
+  advanceTournament(r);
+}
+function advanceTournament(r) {
+  const t = r.tournament; if (!t || t.finished) return;
+  const round = t.rounds[t.current] || [];
+  if (!round.length || round.some(m => !m.winner)) return;
+  const winners = round.map(m => m.winner).filter(Boolean);
+  if (winners.length <= 1) {
+    t.champion = winners[0] || null; t.finished = true; emitParty(r); return;
+  }
+  const next = []; let pool = winners.slice();
+  if (pool.length % 2) { const bye = pool.pop(); next.push({ id: randomId(), w: bye, b: null, winner: bye, bye: true, status: 'done', result: 'Freilos' }); }
+  while (pool.length) {
+    const w = pool.shift(), b = pool.shift(), id = randomId();
+    const m = { id, w, b, winner: null, status: 'playing' };
+    next.push(m);
+    const g = makePartyMatch(r, [w], [b], { kind: 'tournament', round: t.current + 1, bracketMatchId: id });
+    m.gameId = g.id;
+  }
+  t.rounds.push(next); t.current++;
+  emitParty(r);
+}
+function startTournament(r, keys) {
+  const ordered = shuffle(keys), target = 2 ** Math.ceil(Math.log2(ordered.length)), byes = target - ordered.length;
+  const first = [];
+  for (let i = 0; i < byes; i++) first.push({ id: randomId(), w: ordered[i], b: null, winner: ordered[i], bye: true, status: 'done', result: 'Freilos' });
+  const rest = ordered.slice(byes);
+  while (rest.length) {
+    const w = rest.shift(), b = rest.shift(), id = randomId();
+    first.push({ id, w, b, winner: null, status: 'playing' });
+  }
+  r.tournament = { rounds: [first], current: 0, champion: null, finished: false, createdAt: Date.now() };
+  for (const m of first) if (m.b) { const g = makePartyMatch(r, [m.w], [m.b], { kind: 'tournament', round: 0, bracketMatchId: m.id }); m.gameId = g.id; }
+  advanceTournament(r);
+  emitParty(r);
+}
+function finishPartyMatch(r, g, winnerSide, reason) {
+  if (!g || g.status !== 'playing') return;
+  g.status = 'done';
+  const winner = winnerSide === 'w' ? g.white[0] : winnerSide === 'b' ? g.black[0] : null;
+  g.result = { winnerSide: winnerSide || null, winner, reason: reason || (winner ? 'Sieg' : 'Remis'), at: Date.now() };
+  if (g.kind === 'tournament') setTournamentWinner(r, g, winner, g.result.reason);
+  notifyPartyGameUpdate(r, g);
+  io.to(r.code).emit('party:game-finished', { gameId: g.id, result: g.result });
+  emitParty(r);
+}
+let lastPartyClockPersist = 0;
+function tickPartyGames() {
+  const now = Date.now();
+  for (const r of rooms.values()) {
+    if (r.kind !== 'party') continue;
+    let changed = false;
+    for (const g of Object.values(r.matches || {})) {
+      if (g.status !== 'playing') continue;
+      const before = currentSide(g), clock = partyClock(g, now);
+      if (clock[before] <= 0) { const c = chessFrom(g.fen), draw = c.isInsufficientMaterial(); finishPartyMatch(r, g, draw ? null : (before === 'w' ? 'b' : 'w'), draw ? 'Zeit abgelaufen · Remis (nicht mattsetzbares Material)' : 'Zeit abgelaufen'); changed = true; }
+      else notifyPartyGameUpdate(r, g);
+    }
+    if (changed) saveParties();
+  }
+  // Laufende Uhren regelmäßig sichern, damit ein unerwarteter Prozessabbruch
+  // nicht die seit dem letzten Zug verstrichene Zeit zurücksetzt.
+  if (now - lastPartyClockPersist >= 10000) {
+    lastPartyClockPersist = now;
+    if ([...rooms.values()].some(r => r.kind === 'party' && Object.values(r.matches || {}).some(g => g.status === 'playing'))) saveParties();
+  }
+}
+setInterval(tickPartyGames, 1000).unref();
+
+// Vier-Seiten-Schach: quadratisches, mit der Spielerzahl wachsendes Brett.
+// Der König darf geschlagen werden; dadurch scheidet seine ganze Armee aus.
+function makeFFA(r, keys) {
+  const size = Math.max(16, 12 + keys.length * 2), board = Array(size * size).fill(null), offset = Math.floor((size - 8) / 2);
+  const dirs = ['top', 'right', 'bottom', 'left'];
+  const fplayers = keys.map((key, i) => ({ key, color: FFA_COLORS[i], alive: true, direction: dirs[i] }));
+  const put = (x, y, owner, type) => { if (x >= 0 && y >= 0 && x < size && y < size) board[y * size + x] = { owner, type }; };
+  for (const pl of fplayers) {
+    const back = FFA_BACK.split('');
+    if (pl.direction === 'top') {
+      back.forEach((t, i) => put(offset + i, 0, pl.key, t)); put(offset + 3, 1, pl.key, 'p'); put(offset + 4, 1, pl.key, 'p');
+    } else if (pl.direction === 'bottom') {
+      back.forEach((t, i) => put(offset + i, size - 1, pl.key, t)); put(offset + 3, size - 2, pl.key, 'p'); put(offset + 4, size - 2, pl.key, 'p');
+    } else if (pl.direction === 'left') {
+      back.forEach((t, i) => put(0, offset + i, pl.key, t)); put(1, offset + 3, pl.key, 'p'); put(1, offset + 4, pl.key, 'p');
+    } else {
+      back.forEach((t, i) => put(size - 1, offset + i, pl.key, t)); put(size - 2, offset + 3, pl.key, 'p'); put(size - 2, offset + 4, pl.key, 'p');
+    }
+  }
+  r.ffa = { size, board, players: fplayers, order: keys.slice(), turnIndex: 0, over: false, winner: null, history: [], startedAt: Date.now() };
+  r.started = true;
+}
+function ffaOwnerAlive(f, key) { const p = f.players.find(x => x.key === key); return !!(p && p.alive); }
+function ffaPathClear(f, x1, y1, x2, y2) {
+  const dx = Math.sign(x2 - x1), dy = Math.sign(y2 - y1); let x = x1 + dx, y = y1 + dy;
+  while (x !== x2 || y !== y2) { if (f.board[y * f.size + x]) return false; x += dx; y += dy; }
+  return true;
+}
+function ffaLegal(f, owner, from, to) {
+  const n = f.size, b = f.board;
+  if (![from, to].every(v => Number.isInteger(v) && v >= 0 && v < n * n) || from === to) return false;
+  const a = b[from], z = b[to]; if (!a || a.owner !== owner || (z && z.owner === owner)) return false;
+  const x1 = from % n, y1 = Math.floor(from / n), x2 = to % n, y2 = Math.floor(to / n), dx = x2 - x1, dy = y2 - y1;
+  const pl = f.players.find(p => p.key === owner), dir = pl?.direction;
+  const forward = dir === 'top' ? [0, 1] : dir === 'bottom' ? [0, -1] : dir === 'left' ? [1, 0] : [-1, 0];
+  const ax = Math.abs(dx), ay = Math.abs(dy), type = a.type;
+  if (type === 'n') return (ax === 1 && ay === 2) || (ax === 2 && ay === 1);
+  if (type === 'k') return Math.max(ax, ay) === 1;
+  if (type === 'p') {
+    const dot = dx * forward[0] + dy * forward[1];
+    const cross = Math.abs(dx * forward[1] - dy * forward[0]);
+    if (!z) return dot === 1 && cross === 0;
+    return dot === 1 && cross === 1;
+  }
+  const diagonal = ax === ay && ax > 0, straight = (dx === 0) !== (dy === 0);
+  if (type === 'b' && !diagonal) return false;
+  if (type === 'r' && !straight) return false;
+  if (type === 'q' && !diagonal && !straight) return false;
+  if (!diagonal && !straight) return false;
+  return ffaPathClear(f, x1, y1, x2, y2);
+}
+function ffaNextTurn(f) {
+  if (f.over) return;
+  for (let i = 0; i < f.order.length; i++) {
+    f.turnIndex = (f.turnIndex + 1) % f.order.length;
+    if (ffaOwnerAlive(f, f.order[f.turnIndex])) return;
+  }
+}
+function sendFFA(r) { io.to(r.code).emit('ffa:state', { state: publicFFA(r) }); saveParties(); }
+
 io.on('connection', s => {
-  s.data.room = null; s.data.party = null; s.data.elo = 300;
+  s.data.room = null; s.data.elo = 300;
   s.emit('server:info', { persist: persistOK() });
   const U = () => s.data.user, room = () => rooms.get(s.data.room);
   const need = () => { if (U()) return true; s.emit('room:error', { message: 'Bitte zuerst anmelden.' }); return false; };
-  s.on('clock:ping', d => s.emit('clock:pong', { clientTime: Number(d && d.clientTime) || 0, serverNow: Date.now() }));
 
-  const ok = u => {
+  const ok = (u, resume = true) => {
     if (u.v !== 3) { if (!(u.v >= 2)) u.elo = 300; u.v = 3; u.coins = 0; u.bots = u.bots || []; u.fr = u.fr || []; u.av = u.av | 0; saveUsers(); }   // Gold startet bei 0
     s.data.user = u; s.data.elo = u.elo;
     const k = low(u); byKey[k] = byKey[k] || []; if (!byKey[k].includes(s)) byKey[k].push(s);
     s.emit('auth:ok', { token: u.tok, profile: pub(u), shop: SHOP, cred: { salt: u.salt, hash: u.hash }, persist: persistOK(), fr: u.fr });
+    if (resume) resumeParty(s, u);
   };
 
   // ---- Konto ----
@@ -959,19 +614,19 @@ io.on('connection', s => {
     if (users[k] || ghosts[k]) return s.emit('auth:fail', { message: 'Dieser Name ist schon vergeben. Ist es dein Name? Dann melde dich an.' });
     const salt = crypto.randomBytes(8).toString('hex');
     const u = users[k] = { name: n, salt, hash: hash(p, salt), tok: crypto.randomBytes(24).toString('hex'), coins: 0, elo: 300, owned: [], presets: [], av: 0, v: 3, bots: [], fr: [] };
-    saveUsers(); ok(u);
+    saveUsers(); ok(u, !(d && d.noPartyResume));
   });
   s.on('auth:login', d => {
     const u = users[String((d && d.name) || '').trim().toLowerCase()];
     if (!u || hash(String(d.pass || ''), u.salt) !== u.hash) return s.emit('auth:fail', { message: 'Name oder Passwort stimmt nicht.' });
-    ok(u);
+    ok(u, !(d && d.noPartyResume));
   });
   s.on('auth:token', d => {
     const u = users[String((d && d.name) || '').toLowerCase()];
     if (!u || u.tok !== (d && d.token)) return s.emit('auth:fail', { silent: true });
-    ok(u);
+    ok(u, !(d && d.noPartyResume));
   });
-  s.on('auth:logout', () => { leave(s,true); offline(s); s.data.user = null; });
+  s.on('auth:logout', () => { leave(s, true); offline(s); s.data.user = null; });
 
   // Konto nach Server-Neustart vom Gerät wiederherstellen (Name muss frei sein)
   s.on('auth:restore', d => {
@@ -979,7 +634,7 @@ io.on('connection', s => {
     const n = String(d.name || '').trim(), k = n.toLowerCase(), p = d.profile || {};
     if (!NAME_RE.test(n) || !/^[0-9a-f]{16}$/.test(d.salt) || !/^[0-9a-f]{64}$/.test(d.hash) || !/^[0-9a-f]{48}$/.test(d.token))
       return s.emit('auth:fail', { message: 'Konto konnte nicht wiederhergestellt werden.' });
-    if (users[k]) return users[k].tok === d.token ? ok(users[k]) : s.emit('auth:fail', { message: 'Dein Name ist inzwischen vergeben. Melde dich an oder wähle einen neuen Namen.' });
+    if (users[k]) return users[k].tok === d.token ? ok(users[k], !(d && d.noPartyResume)) : s.emit('auth:fail', { message: 'Dein Name ist inzwischen vergeben. Melde dich an oder wähle einen neuen Namen.' });
     const owned = [...new Set((Array.isArray(p.owned) ? p.owned : []).filter(id => SHOP[id]))];
     const bots = [...new Set((Array.isArray(p.bots) ? p.bots : []).map(Number).filter(x => Number.isInteger(x) && x >= 0 && x < BOT_R.length))];
     const cand = { name: n, coins: Math.max(0, Math.round(+p.coins) || 0), elo: int(p.elo, 100, 3000, 300), owned, bots };
@@ -988,7 +643,7 @@ io.on('connection', s => {
       coins: p.v === 3 ? (good ? cand.coins : Math.min(cand.coins, 1000)) : 0, elo: p.v >= 2 ? (good ? cand.elo : Math.min(cand.elo, 600)) : 300,
       owned, bots: p.v === 3 || good ? bots : [], presets: cleanPresets(p.presets), av: int(p.av, 0, 23, 0), v: 3,
       fr: [...new Set((Array.isArray(d.fr) ? d.fr : []).map(x => String(x).toLowerCase()).filter(x => NAME_RE.test(x) && x !== k))].slice(0, 100) };
-    delete ghosts[k]; saveUsers(); ok(u);
+    delete ghosts[k]; saveUsers(); ok(u, !(d && d.noPartyResume));
   });
 
   s.on('profile:save', d => {
@@ -1008,9 +663,7 @@ io.on('connection', s => {
       for (const x of Object.values(users)) if (x.fr) x.fr = x.fr.map(f => (f === old ? k : f));
       byKey[k] = byKey[old] || []; delete byKey[old];
     }
-    u.name = n;
-    if(k!==old)renamePartyMember(old,k,n);
-    saveUsers();
+    u.name = n; saveUsers();
     s.emit('profile:update', { profile: pub(u), reward: { t: 'Name geändert' } });
   });
 
@@ -1046,125 +699,144 @@ io.on('connection', s => {
     s.emit('lb:data', { top: rows.slice(0, 100).map(r => ({ n: r.n, e: r.e, a: r.a, s: lSig(r.n, r.e, r.a) })), rank: me ? rows.findIndex(r => r.k === me) + 1 : 0, total: rows.length });
   });
 
-  // ---- Private Party: Mehrspieler-Lobby mit vier Modi ----
+  // ---- Private Party: Multiplayer-Lobby (der Leiter verwaltet alle Einstellungen) ----
   s.on('room:create', d => {
     if (!need()) return;
-    leave(s,true); s.data.elo=U().elo;
-    const code=code6(),key=pkey(s);
-    const p={code,host:key,mode:'normal',tc:ptime(d&&d.tc||otc),status:'lobby',
-      players:[{key,name:U().name,elo:U().elo,av:U().av|0,connected:true,socketId:s.id,currentGame:null}],
-      pairings:[],tournamentPlayers:null,tournamentPreview:null,teams:{w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'}},ffaTeams:{},games:[],tournament:null,ffa:null,createdAt:Date.now()};
-    parties.set(code,p);s.data.party=code;s.join('party:'+code);
-    s.emit('room:created',{code});broadcastParty(p);
+    if (s.data.room) leave(s, true);
+    const code = code6(), key = keyOf(U().name);
+    const r = { code, kind: 'party', host: key, mode: 'normal', settings: { time: tcOf(d && d.tc) },
+      players: [{ key, name: U().name, id: s.id, elo: U().elo, avatar: U().av | 0, connected: true, joinedAt: Date.now() }],
+      pairings: [], teams: { w: [], b: [] }, teamConfig: { wName: 'Team Weiß', bName: 'Team Schwarz', wColor: '#ffffff', bColor: '#1a1a1a' }, matches: {}, tournament: null, ffa: null, started: false, updatedAt: Date.now() };
+    rooms.set(code, r); s.data.room = code; s.join(code);
+    s.emit('room:created', { code }); emitParty(r); emitPartyTo(s, r, key);
   });
   s.on('room:join', d => {
-    if(!need())return;
-    const code=String(d&&d.code||''),p=parties.get(code);
-    if(!/^\d{6}$/.test(code)||!p)return s.emit('room:error',{message:'Diesen Party-Code gibt es nicht.'});
-    if(p.status==='finished'&&!partyPlayer(p,pkey(s)))return s.emit('room:error',{message:'Diese Party ist bereits beendet.'});
-    if(s.data.party!==code)leave(s,true);
-    const m=addPartyMember(p,s);
-    if(!m)return s.emit('room:error',{message:'Die Party ist voll (maximal 16 Spieler).'});
-    s.emit('room:joined',{code});broadcastParty(p);
-    if(p.ffa){s.emit('ffa:start',ffaPublic(p.ffa));if(p.ffa.winner)s.emit('ffa:finished',{winner:p.ffa.winner,name:p.ffa.players.find(x=>x.key===p.ffa.winner)?.name});}
+    if (!need()) return;
+    const code = String((d && d.code) || ''), r = rooms.get(code);
+    if (!/^\d{6}$/.test(code) || !r || r.kind !== 'party') return s.emit('room:error', { message: 'Diesen Party-Code gibt es nicht mehr.' });
+    if (s.data.room === code) { emitPartyTo(s, r, keyOf(U().name)); return; }
+    const joinKey = keyOf(U().name);
+    if (!playerIn(r, joinKey) && r.players.length >= 16) return s.emit('room:error', { message: 'Die Party ist voll (maximal 16 Spieler).' });
+    if (s.data.room) leave(s, true);
+    const p = addPartyPlayer(r, s, U());
+    if (!p) return s.emit('room:error', { message: 'Die Party ist voll (maximal 16 Spieler).' });
+    s.emit('room:joined', { code }); emitParty(r); emitPartyTo(s, r, p.key);
+    const active = Object.values(r.matches || {}).find(g => g.status === 'playing' && [...g.white, ...g.black].includes(p.key));
+    if (active) sendPartyGameStart(s, r, active, p.key, false);
+    if (r.mode === 'ffa' && r.ffa && !r.ffa.over) s.emit('ffa:start', { state: publicFFA(r) });
   });
-  s.on('room:leave', () => leave(s,true));
-  s.on('party:mode',d=>{
-    const p=parties.get(s.data.party);if(!p||p.host!==pkey(s))return s.emit('room:error',{message:'Nur der Party-Leiter darf den Modus ändern.'});
-    if((p.games||[]).some(g=>g.status==='running')||p.status==='running')return s.emit('room:error',{message:'Der Modus kann während laufender Spiele nicht geändert werden.'});
-    const mode=String(d&&d.mode||p.mode);if(!PARTY_MODES.includes(mode))return;
-    p.tc=ptime(d&&d.tc||p.tc);
-    if(mode!==p.mode) {
-      p.mode=mode;p.status='lobby';p.ffa=null;p.tournament=null;p.tournamentPreview=null;p.ffaTeams={};p.games=p.games.filter(g=>g.status==='running');
-      p.pairings=[];
-      if(mode==='team'){p.teams={w:[],b:[],names:{w:'Team Weiß',b:'Team Schwarz'},colors:{w:'#f5f5f5',b:'#252a34'}};defaultTeamAssign(p);}
-      if(mode==='tournament')p.tournamentPlayers=null;
+  s.on('room:state:get', () => { const r = room(); if (r && r.kind === 'party') emitPartyTo(s, r, keyOf(U().name)); });
+  s.on('room:leave', () => leave(s, true));
+  s.on('room:update', d => {
+    const r = room(), key = U() && keyOf(U().name);
+    if (!r || r.kind !== 'party' || r.host !== key) return s.emit('room:error', { message: 'Nur der Party-Leiter darf Einstellungen ändern.' });
+    if (Object.values(r.matches || {}).some(g => g.status === 'playing') || (r.ffa && !r.ffa.over)) return s.emit('room:error', { message: 'Während laufender Spiele können die Modi nicht gewechselt werden.' });
+    const mode = String(d && d.mode || r.mode), changed = PARTY_MODES.has(mode) && mode !== r.mode;
+    if (changed) r.mode = mode;
+    if (d && d.time !== undefined) r.settings.time = int(d.time, 1, 180, r.settings.time || 5);
+    if (changed) { r.started = false; r.tournament = null; r.ffa = null; r.pairings = []; r.teams = { w: [], b: [] }; }
+    emitParty(r);
+  });
+  s.on('room:pairings', d => {
+    const r = room(), key = U() && keyOf(U().name);
+    if (!r || r.kind !== 'party' || r.host !== key || r.mode !== 'normal') return;
+    if (Object.values(r.matches || {}).some(g => g.status === 'playing')) return s.emit('room:error', { message: 'Paarungen können während laufender Partien nicht geändert werden.' });
+    const pairs = Array.isArray(d && d.pairs) ? d.pairs.slice(0, 8) : [], used = new Set(), cleanPairs = [];
+    for (const pair of pairs) {
+      const w = keyOf(pair && pair.w), b = keyOf(pair && pair.b);
+      if (!w || !b || w === b || !playerIn(r, w) || !playerIn(r, b) || used.has(w) || used.has(b)) continue;
+      used.add(w); used.add(b); cleanPairs.push({ w, b });
     }
-    broadcastParty(p);
+    r.pairings = cleanPairs; emitParty(r);
   });
-  s.on('party:pairings',d=>{
-    const p=parties.get(s.data.party);if(!p||p.host!==pkey(s)||p.mode!=='normal'||p.status==='running')return;
-    p.pairings=validPairings(p,d&&d.pairs)||[];broadcastParty(p);
-  });
-  s.on('party:tournament-players',d=>{
-    const p=parties.get(s.data.party);if(!p||p.host!==pkey(s)||p.mode!=='tournament'||p.status==='running')return;
-    const valid=new Set(partyMemberKeys(p));
-    p.tournamentPlayers=[...new Set((Array.isArray(d&&d.players)?d.players:[]).map(x=>String(x).toLowerCase()).filter(x=>valid.has(x)))];
-    p.tournamentPreview=null;broadcastParty(p);
-  });
-  s.on('party:tournament-preview',()=>{
-    const p=parties.get(s.data.party);if(!p||p.host!==pkey(s)||p.mode!=='tournament'||p.status==='running')return;
-    const members=new Set(partyMemberKeys(p)),keys=(Array.isArray(p.tournamentPlayers)?p.tournamentPlayers.filter(k=>members.has(k)):partyMemberKeys(p));
-    if(keys.length<2)return s.emit('room:error',{message:'Für die Auslosung werden mindestens zwei Teilnehmer benötigt.'});
-    p.tournamentPreview=buildTournamentPreview(keys);broadcastParty(p);
-  });
-  s.on('party:ffa-teams',d=>{
-    const p=parties.get(s.data.party);if(!p||p.host!==pkey(s)||p.mode!=='ffa'||p.status==='running')return;
-    const valid=new Set(partyMemberKeys(p)),out={};
-    for(const [key,group] of Object.entries(d&&d.groups||{}))if(valid.has(key)){const v=String(group||'solo');out[key]=['1','2','3','4'].includes(v)?v:'solo';}
-    p.ffaTeams=out;broadcastParty(p);
-  });
-  s.on('party:teams',d=>{
-    const p=parties.get(s.data.party);if(!p||p.host!==pkey(s)||p.mode!=='team')return;
-    const valid=new Set(partyMemberKeys(p)),cleanList=a=>[...new Set((Array.isArray(a)?a:[]).map(x=>String(x).toLowerCase()).filter(x=>valid.has(x)))];
-    const w=cleanList(d&&d.w),b=cleanList(d&&d.b).filter(x=>!w.includes(x));
-    const active=(p.games||[]).find(x=>x.kind==='team'&&x.status==='running');
-    if(active){for(const k of [...active.whiteKeys,...active.blackKeys]){const old=active.whiteKeys.includes(k)?'w':'b',next=w.includes(k)?'w':b.includes(k)?'b':null;if(next!==old)return s.emit('room:error',{message:'Während einer Team-Partie können bestehende Spieler nicht die Seite wechseln oder entfernt werden. Weise stattdessen einen freien oder Ersatzspieler zu.'});}}
-    const names=d&&d.names||{};
-    const colors=d&&d.colors||{};
-    const cleanColor=v=>/^#[0-9a-f]{6}$/i.test(String(v||''))?String(v):'#ffffff';
-    p.teams={w,b,names:{w:String(names.w||'Team Weiß').slice(0,20),b:String(names.b||'Team Schwarz').slice(0,20)},
-      colors:{w:cleanColor(colors.w),b:cleanColor(colors.b)}};
-    const g=(p.games||[]).find(x=>x.kind==='team'&&x.status==='running');
-    if(g) {
-      const before=[...(g.whiteKeys||[]),...(g.blackKeys||[])],after=[...w,...b];
-      for(const k of before.filter(k=>!after.includes(k))) {
-        const m=partyPlayer(p,k),x=m&&sock(m.socketId);
-        if(m&&m.currentGame===g.code)m.currentGame=null;
-        if(x){x.leave(g.code);if(x.data.room===g.code)x.data.room=null;}
-      }
-      g.whiteKeys=w;g.blackKeys=b;g.teamIndex=g.teamIndex||{w:0,b:0};
-      g.teamIndex.w=w.length?g.teamIndex.w%w.length:0;g.teamIndex.b=b.length?g.teamIndex.b%b.length:0;
-      g.teamIndex.w=partyTeamIndex(p,g,'w');g.teamIndex.b=partyTeamIndex(p,g,'b');
-      for(const k of after.filter(k=>!before.includes(k))) {
-        const m=partyPlayer(p,k),x=m&&sock(m.socketId);if(!m||!x)continue;
-        if(x.data.room&&x.data.room!==g.code)x.leave(x.data.room);
-        x.data.room=g.code;x.join(g.code);m.currentGame=g.code;
-        const side=w.includes(k)?'w':'b',opp=(side==='w'?b:w).map(z=>partyPlayer(p,z)?.name||z).join(' + ');
-        x.emit('game:start',{code:g.code,side,kind:'party',tc:g.tc||0,clock:g.clock?clockView(g):null,opp:{n:opp,e:0},canMove:canPartyMove(g,k),partyGame:true,team:true,teamColors:p.teams&&p.teams.colors});
-        x.emit('game:sync',{board:g.board,turn:g.turn,castling:g.castling,ep:g.ep,halfmove:g.halfmove,history:g.history||[],clock:g.clock?clockView(g):null});
-      }
-      // Bestehende Spieler behalten ihr Brett; nur Zugberechtigung und Team-Rotation werden aktualisiert.
-      io.to(g.code).emit('game:turn',partyTurnView(p,g));
+  s.on('room:teams', d => {
+    const r = room(), key = U() && keyOf(U().name);
+    if (!r || r.kind !== 'party' || r.host !== key || r.mode !== 'team') return;
+    const available = new Set(r.players.filter(p => p.connected).map(p => p.key));
+    const w = [...new Set((Array.isArray(d && d.w) ? d.w : []).map(keyOf).filter(k => available.has(k)))];
+    const b = [...new Set((Array.isArray(d && d.b) ? d.b : []).map(keyOf).filter(k => available.has(k) && !w.includes(k)))];
+    const liveTeamGame = Object.values(r.matches || {}).some(g => g.kind === 'team' && g.status === 'playing');
+    if (liveTeamGame && (!w.length || !b.length)) return s.emit('room:error', { message: 'Während einer laufenden Team-Partie muss jedes Team mindestens einen verbundenen Spieler haben.' });
+    r.teams = { w, b };
+    const tc = d && d.config || {};
+    r.teamConfig = { wName: String(tc.wName || r.teamConfig.wName).replace(/[&<>\"']/g, '').trim().slice(0, 20) || 'Team Weiß', bName: String(tc.bName || r.teamConfig.bName).replace(/[&<>\"']/g, '').trim().slice(0, 20) || 'Team Schwarz',
+      wColor: /^#[0-9a-f]{6}$/i.test(tc.wColor || '') ? tc.wColor : r.teamConfig.wColor, bColor: /^#[0-9a-f]{6}$/i.test(tc.bColor || '') ? tc.bColor : r.teamConfig.bColor };
+    for (const g of Object.values(r.matches || {})) if (g.kind === 'team' && g.status === 'playing') {
+      g.white = w.slice(); g.black = b.slice(); g.teamConfig = { ...r.teamConfig };
+      g.turnIndex.w = 0; g.turnIndex.b = 0;
+      notifyPartyGameUpdate(r, g);
     }
-    broadcastParty(p);
+    emitParty(r);
   });
-  s.on('party:start',()=>{
-    const p=parties.get(s.data.party);if(!p)return partyErr(s,'Du bist in keiner Party.');
-    partyStart(s,p);
+  s.on('room:start', d => {
+    const r = room(), key = U() && keyOf(U().name);
+    if (!r || r.kind !== 'party' || r.host !== key) return s.emit('room:error', { message: 'Nur der Party-Leiter kann starten.' });
+    const active = Object.values(r.matches || {}).some(g => g.status === 'playing');
+    if (active || (r.ffa && !r.ffa.over)) return s.emit('room:error', { message: 'Es läuft bereits ein Spiel.' });
+    const connected = r.players.filter(p => p.connected).map(p => p.key);
+    if (r.mode === 'normal') {
+      const pairs = r.pairings || [];
+      if (!pairs.length) return s.emit('room:error', { message: 'Lege zuerst mindestens eine Paarung fest.' });
+      const previousMatches = Object.keys(r.matches || {}).length;
+      for (const p of pairs) {
+        if (!connected.includes(p.w) || !connected.includes(p.b)) continue;
+        makePartyMatch(r, [p.w], [p.b], { kind: 'normal' });
+      }
+      if (Object.keys(r.matches).length === previousMatches) return s.emit('room:error', { message: 'Die ausgewählten Spieler sind nicht mehr verbunden.' });
+      r.started = true; emitParty(r);
+    } else if (r.mode === 'tournament') {
+      const keys = (Array.isArray(d && d.players) ? d.players.map(keyOf) : connected).filter((k, i, a) => playerIn(r, k) && connected.includes(k) && a.indexOf(k) === i);
+      if (keys.length < 2) return s.emit('room:error', { message: 'Für ein Turnier werden mindestens zwei verbundene Spieler benötigt.' });
+      r.started = true; startTournament(r, keys);
+    } else if (r.mode === 'team') {
+      let w = r.teams.w.filter(k => connected.includes(k)), b = r.teams.b.filter(k => connected.includes(k));
+      if (!w.length || !b.length) return s.emit('room:error', { message: 'Weise mindestens einen verbundenen Spieler jedem Team zu.' });
+      if (w.some(k => b.includes(k))) return s.emit('room:error', { message: 'Ein Spieler darf nur in einem Team sein.' });
+      const assigned = new Set([...w, ...b]);
+      const rest = connected.filter(k => !assigned.has(k));
+      rest.forEach((k, i) => (w.length <= b.length ? w : b).push(k));
+      r.teams = { w, b }; r.started = true;
+      makePartyMatch(r, w, b, { kind: 'team' }); emitParty(r);
+    } else if (r.mode === 'ffa') {
+      const keys = connected.slice(0, 4);
+      if (keys.length < 2) return s.emit('room:error', { message: 'Für Alle gegen Alle werden mindestens zwei verbundene Spieler benötigt.' });
+      makeFFA(r, keys); sendFFA(r); io.to(r.code).emit('ffa:start', { state: publicFFA(r) });
+    }
   });
-  function partyErr(x,message){x.emit('room:error',{message});}
-  s.on('party:watch',d=>{
-    const p=parties.get(s.data.party),g=p&&(p.games||[]).find(x=>x.code===String(d&&d.code||''));
-    if(!p||!g||g.kind==='ffa')return;
-    const key=pkey(s);if(g.status!=='running'&&!g.board)return;
-    const active=(p.games||[]).find(x=>x.status==='running'&&((x.whiteKeys||[]).includes(key)||(x.blackKeys||[]).includes(key)));
-    if(active&&active.code!==g.code)return s.emit('room:error',{message:'Du spielst bereits eine laufende Partie. Beende sie oder kehre zu ihr zurück, bevor du eine andere Partie öffnest.'});
-    if(s.data.room && s.data.room!==g.code){s.leave(s.data.room);s.data.room=null;}
-    s.data.room=g.code;s.join(g.code);
-    const playingWhite=(g.whiteKeys||[]).includes(key),playingBlack=(g.blackKeys||[]).includes(key),playing=playingWhite||playingBlack;
-    const side=playingWhite?'w':playingBlack?'b':'w';
-    const oppKeys=side==='w'?g.blackKeys:g.whiteKeys;
-    s.emit('game:start',{code:g.code,side,kind:'party',tc:g.tc||0,clock:g.clock?clockView(g):null,
-      opp:{n:(oppKeys||[]).map(k=>partyPlayer(p,k)?.name||k).join(' + ')||'Zuschauer',e:0},spectator:!playing,canMove:playing&&canPartyMove(g,key),partyGame:true,team:g.kind==='team',teamColors:p.teams&&p.teams.colors});
-    s.emit('game:sync',{board:g.board,turn:g.turn,castling:g.castling,ep:g.ep,halfmove:g.halfmove,history:g.history||[],clock:g.clock?clockView(g):null});
-    s.emit('game:turn',partyTurnView(p,g));
+  s.on('game:watch', d => {
+    const r = room(), key = U() && keyOf(U().name), g = r && r.kind === 'party' && r.matches[String(d && d.gameId || '')];
+    if (!g) return s.emit('room:error', { message: 'Diese Partie wurde nicht gefunden.' });
+    sendPartyGameStart(s, r, g, key, !g.white.includes(key) && !g.black.includes(key));
   });
-
+  s.on('ffa:move', d => {
+    const r = room(), key = U() && keyOf(U().name), f = r && r.kind === 'party' && r.ffa;
+    if (!f || f.over || !d) return;
+    const current = f.order[f.turnIndex];
+    if (current !== key) return s.emit('room:error', { message: 'Du bist gerade nicht an der Reihe.' });
+    const from = Number(d.from), to = Number(d.to);
+    if (!ffaLegal(f, key, from, to)) return s.emit('room:error', { message: 'Dieser Zug ist nicht erlaubt.' });
+    const moving = f.board[from], captured = f.board[to];
+    f.board[to] = moving; f.board[from] = null;
+    const n = f.size, x = to % n, y = Math.floor(to / n), pl = f.players.find(p => p.key === key);
+    if (moving.type === 'p' && ((pl.direction === 'top' && y === n - 1) || (pl.direction === 'bottom' && y === 0) || (pl.direction === 'left' && x === n - 1) || (pl.direction === 'right' && x === 0))) moving.type = 'q';
+    let eliminated = null;
+    if (captured && captured.type === 'k') {
+      const victim = f.players.find(p => p.key === captured.owner);
+      if (victim) { victim.alive = false; eliminated = playerIn(r, victim.key)?.name || victim.key; }
+      f.board = f.board.map(piece => piece && piece.owner === captured.owner ? null : piece);
+      f.order = f.order.filter(k => k !== captured.owner);
+      if (f.order.length <= 1) { f.over = true; f.winner = f.order[0] || null; }
+      else f.turnIndex = Math.max(0, f.order.indexOf(key));
+    }
+    f.history.push({ player: playerIn(r, key)?.name || key, from, to, captured: captured ? captured.type : null, eliminated, at: Date.now() });
+    if (!f.over) ffaNextTurn(f);
+    sendFFA(r);
+    emitParty(r);
+  });
   // ---- Gegnersuche je Bedenkzeit (1, 3, 5 oder 10 Minuten), Elo-nah ----
   s.on('match:join', d => {
     if (!need()) return;
-    leave(s,true); s.data.elo = U().elo;
+    leave(s); s.data.elo = U().elo;
     const tc = tcOf(d && d.tc);
     let best = -1;
     queue.forEach((q, i) => { if (q.tc === tc && (best < 0 || Math.abs(q.elo - s.data.elo) < Math.abs(queue[best].elo - s.data.elo))) best = i; });
@@ -1176,70 +848,60 @@ io.on('connection', s => {
   });
   s.on('match:leave', () => { queue = queue.filter(q => q.id !== s.id); });
 
-  // ---- Serverseitig geprüfte Züge ----
+  // ---- Im Spiel: klassische Matches plus servergeprüfte Party-Partien ----
   s.on('game:move', d => {
-    const r=room();if(!r||!d||!Number.isInteger(d.from)||!Number.isInteger(d.to))return;
-    const key=pkey(s);
-    const side=r.kind==='party-game'||r.kind==='team'
-      ? (r.whiteKeys.includes(key)?'w':r.blackKeys.includes(key)?'b':null)
-      : (s.id===r.w?'w':s.id===r.b?'b':null);
-    if(!side||!r.clock||r.clock.ended||side!==r.turn|| (r.kind==='party-game'||r.kind==='team')&&!canPartyMove(r,key)) {
-      s.emit('game:sync',{board:r.board,turn:r.turn,castling:r.castling,ep:r.ep,halfmove:r.halfmove,history:r.history||[],clock:r.clock?clockView(r):null});return;
+    const r = room();
+    if (!r || !d || !Number.isInteger(d.from) || !Number.isInteger(d.to)) return;
+    if (r.kind === 'party') {
+      const key = U() && keyOf(U().name), g = r.matches && r.matches[String(d.gameId || '')];
+      if (!g || g.status !== 'playing' || d.from < 0 || d.from > 63 || d.to < 0 || d.to > 63) return;
+      const side = currentSide(g), expected = nextTeamActor(g, side);
+      if (expected !== key || !(side === 'w' ? g.white : g.black).includes(key)) return s.emit('party:game-error', { gameId: g.id, message: 'Du bist nicht der nächste Spieler in deinem Team.' });
+      const clocks = partyClock(g);
+      if (clocks[side] <= 0) { const c = chessFrom(g.fen), draw = c.isInsufficientMaterial(); finishPartyMatch(r, g, draw ? null : (side === 'w' ? 'b' : 'w'), draw ? 'Zeit abgelaufen · Remis (nicht mattsetzbares Material)' : 'Zeit abgelaufen'); return; }
+      try {
+        const chess = chessFrom(g.fen), promotion = ['q', 'r', 'b', 'n'].includes(d.promotion) ? d.promotion : 'q';
+        const move = chess.move({ from: idxSquare(d.from), to: idxSquare(d.to), promotion });
+        if (!move) return s.emit('party:game-error', { gameId: g.id, message: 'Ungültiger Schachzug.' });
+        g.fen = chess.fen(); g.moves.push({ from: d.from, to: d.to, promotion: move.promotion || '', san: move.san });
+        g.turnIndex[side] = (g.turnIndex[side] || 0) + 1; g.lastTick = Date.now();
+        io.to(r.code).emit('game:move', { gameId: g.id, from: d.from, to: d.to, promotion: move.promotion || '', by: s.id });
+        if (chess.isCheckmate()) finishPartyMatch(r, g, side, 'Schachmatt');
+        else if (chess.isDraw() || chess.isStalemate()) finishPartyMatch(r, g, null, 'Remis');
+        else { notifyPartyGameUpdate(r, g); emitParty(r); }
+      } catch (e) { s.emit('party:game-error', { gameId: g.id, message: 'Der Zug konnte nicht geprüft werden.' }); }
+      return;
     }
-    const now=Date.now();if(checkClock(r,now))return;
-    const result=chApplyMove(r,d);
-    if(!result){s.emit('game:sync',{board:r.board,turn:r.turn,castling:r.castling,ep:r.ep,halfmove:r.halfmove,history:r.history||[],clock:r.clock?clockView(r):null});return;}
-    r.board=result.state.board;r.turn=result.state.turn;r.ep=result.state.ep;r.halfmove=result.state.halfmove;
-    r.moves=(r.moves||0)+1;r.history=r.history||[];
-    r.history.push({from:d.from,to:d.to,promotion:result.move.promotion||''});
-    r.positions=r.positions||{};const posKey=chPositionKey(r);r.positions[posKey]=(r.positions[posKey]||0)+1;
-    if(r.clock){r.clock.turn=r.turn;r.clock.lastAt=now;scheduleClock(r);}
-    io.to(r.code).emit('game:move',{from:d.from,to:d.to,promotion:result.move.promotion||'',by:s.id,clock:r.clock?clockView(r,now):null});
-    if(r.kind==='party-game'||r.kind==='team') {
-      const arr=side==='w'?r.whiteKeys:r.blackKeys;
-      r.teamIndex=r.teamIndex||{w:0,b:0};r.teamIndex[side]=(r.teamIndex[side]+1)%arr.length;
-      const p=parties.get(r.party);if(p){r.teamIndex[side]=partyTeamIndex(p,r,side);io.to(r.code).emit('game:turn',partyTurnView(p,r));}
-    }
-    if(r.kind==='party-game'||r.kind==='team')saveParties();
-    const end=serverGameEnd(r,r.positions[posKey]>=3);
-    if(end) {
-      r.serverResult=end;
-      if(r.kind==='party-game'||r.kind==='team')finishPartyGame(r,end.winner,end.reason);
-      else if(r.kind==='match'&&!r.done) {
-        r.res[r.w]=end.winner==='w'?'win':end.winner==='b'?'loss':'draw';
-        r.res[r.b]=end.winner==='b'?'win':end.winner==='w'?'loss':'draw';
-        settle(r);
-        io.to(r.code).emit('game:verified-end',end);
-      } else io.to(r.code).emit('game:verified-end',end);
-    }
+    if (d.from < 0 || d.from > 63 || d.to < 0 || d.to > 63) return;
+    const side = currentSide(r), actor = side === 'w' ? r.w : r.b;
+    if (s.id !== actor) return s.emit('game:error', { message: 'Du bist nicht am Zug.' });
+    try {
+      const chess = chessFrom(r.fen), promotion = ['q', 'r', 'b', 'n'].includes(d.promotion) ? d.promotion : 'q';
+      const move = chess.move({ from: idxSquare(d.from), to: idxSquare(d.to), promotion });
+      if (!move) return s.emit('game:error', { message: 'Ungültiger Schachzug.' });
+      r.fen = chess.fen();
+      r.moves = (r.moves || 0) + 1;
+      io.to(r.code).emit('game:move', { from: d.from, to: d.to, promotion: move.promotion || '', by: s.id });
+    } catch (e) { s.emit('game:error', { message: 'Ungültiger Schachzug.' }); }
   });
-  s.on('game:resign', () => {
-    const r=room();if(!r||!r.clock||r.clock.ended)return;
-    const key=pkey(s),side=(r.kind==='party-game'||r.kind==='team')?(r.whiteKeys.includes(key)?'w':r.blackKeys.includes(key)?'b':null):(s.id===r.w?'w':s.id===r.b?'b':null);
-    if(!side)return;
-    r.clock.ended=true;clearTimeout(r.clock.timer);r.clock.timer=null;
-    const winner=other(side);
-    if(r.kind==='party-game'||r.kind==='team')finishPartyGame(r,winner,'Aufgegeben');
-    else io.to(r.code).emit('game:resign',{winner,by:s.id});
+  s.on('game:resign', d => {
+    const r = room();
+    if (r && r.kind === 'party') {
+      const key = U() && keyOf(U().name), g = r.matches && r.matches[String(d && d.gameId || '')];
+      if (!g || g.status !== 'playing') return;
+      const side = g.white.includes(key) ? 'w' : g.black.includes(key) ? 'b' : null;
+      if (side) finishPartyMatch(r, g, side === 'w' ? 'b' : 'w', 'Aufgegeben');
+      return;
+    }
+    if (r) s.to(r.code).emit('game:resign');
   });
   s.on('game:look', d => {
-    const r=room(),u=U();if(!r||!d||!u)return;
-    const x=String(d.x||'');s.to(r.code).emit('game:look',{t:Number(d.t)|0,c:String(d.c||'').slice(0,9),x:SHOP[x]&&u.owned.includes(x)?x:''});
+    const r = room(), u = U();
+    if (!r || r.kind === 'party' || !d || !u) return;
+    const x = String(d.x || '');
+    s.to(r.code).emit('game:look', { t: Number(d.t) | 0, c: String(d.c || '').slice(0, 9), x: SHOP[x] && u.owned.includes(x) ? x : '' });
   });
-  s.on('game:over', d => {
-    const r=room();if(!r)return;
-    if(r.kind==='party-game'||r.kind==='team')return; // Partien werden serverseitig beendet, nicht per Client-Behauptung.
-    if(r.clock&&!r.clock.ended){r.clock.ended=true;clearTimeout(r.clock.timer);r.clock.timer=null;}
-    if(r.kind==='match' && r.serverResult) {
-      const win=r.serverResult.winner;
-      r.res[r.w]=win==='w'?'win':win==='b'?'loss':'draw';
-      r.res[r.b]=win==='b'?'win':win==='w'?'loss':'draw';settle(r);
-    } else if(r.kind==='match') claim(r,s,d&&d.res);
-  });
-  s.on('ffa:move',d=>{
-    const p=parties.get(s.data.party);if(!p||p.mode!=='ffa'||!p.ffa)return;
-    if(!ffaMove(p,s,d))s.emit('ffa:state',ffaPublic(p.ffa));
-  });
+  s.on('game:over', d => { const r = room(); if (r && r.kind !== 'party') claim(r, s, d && d.res); });
 
   // ---- Freunde und Herausforderungen ----
   const sendList = () => { const u = U(); if (u) s.emit('friend:list', { list: friendRows(u), keys: u.fr }); };
@@ -1260,8 +922,8 @@ io.on('connection', s => {
     const u = U(); if (!u) return;
     const k = String((d && d.name) || '').toLowerCase(), t = users[k], res = (ok2, msg) => s.emit('invite:result', { ok: ok2, msg });
     if (!t || !u.fr.includes(k)) return res(false, 'Nur Freunde können herausgefordert werden.');
-    if (s.data.room || s.data.party) return res(false, 'Verlasse zuerst dein aktuelles Spiel oder deine Party.');
-    const targets = onSocks(k).filter(x => !x.data.room && !x.data.party);
+    if (s.data.room) return res(false, 'Du bist gerade in einem Spiel.');
+    const targets = onSocks(k).filter(x => !x.data.room);
     if (!targets.length) return res(false, t.name + ' ist gerade offline oder im Spiel.');
     const id = crypto.randomBytes(6).toString('hex'), tc = tcOf(d && d.tc);
     invites.set(id, { from: s.id, tk: k, tc });
@@ -1275,7 +937,7 @@ io.on('connection', s => {
     invites.delete(id);
     const a = sock(inv.from);
     if (!d.accept) return a && a.emit('invite:result', { ok: false, msg: u.name + ' hat abgelehnt.' });
-    if (!a || !a.data.user || a.data.room || a.data.party || s.data.room || s.data.party) {
+    if (!a || !a.data.user || a.data.room || s.data.room) {
       s.emit('invite:result', { ok: false, msg: 'Die Anfrage ist nicht mehr gültig.' });
       return a && a.emit('invite:result', { ok: false, msg: 'Die Anfrage ist nicht mehr gültig.' });
     }
@@ -1283,10 +945,10 @@ io.on('connection', s => {
     start(newRoom('friend', inv.tc, w, b));      // Freundes-Spiel: kein Elo, kein Gold
   });
 
-  s.on('disconnect', () => { leave(s,false); offline(s); });
+  s.on('disconnect', () => { leave(s, false); offline(s); });
 });
 
 const PORT = process.env.PORT || 3000;
-if (require.main === module) loadUsers().then(async () => { await loadParties(); web.listen(PORT, () => console.log('Schach läuft auf Port ' + PORT)); });
+loadUsers().then(loadParties).then(() => web.listen(PORT, () => console.log('Schach läuft auf Port ' + PORT)));
 
-module.exports = { web, __test: { startBoard, chLegal, chApplyMove, serverGameEnd, chPositionKey, buildTournamentBracket, buildTournamentPreview, advanceTournament, enqueueLowerLosers, finishPartyGame, setPartyForTest: p => parties.set(p.code, p), createFFAState, ffaLegal, areFFAAllies, ffaWinner, ffaMove, ffaPublic, addPartyMember, canPartyMove, partyTeamIndex, partyTurnView } };
+module.exports = { web };
