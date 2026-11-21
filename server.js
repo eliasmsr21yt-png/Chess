@@ -1,7 +1,6 @@
 // Schach-Server: liefert die App aus und verbindet Spieler (Socket.IO)
 const http = require('http'), fs = require('fs'), path = require('path');
 const { Server } = require('socket.io');
-const { Chess } = require('chess.js');
 
 const FILES = {
   'index.html': 'text/html; charset=utf-8',
@@ -46,7 +45,6 @@ const SHOP = { fire: 300, bolt: 400, ice: 250, gold: 350, neon: 300, rainbow: 60
 const THI = { 5: 'lava', 6: 'storm', 7: 'night', 8: 'ocean', 9: 'forest', 10: 'rose', 11: 'galaxy' };   // Brett-Index -> Shop-Artikel
 const COMP = { win: 'loss', loss: 'win', draw: 'draw' };
 const KEY = 'chess:users';
-const PARTY_KEY = 'chess:parties';
 // Stabiler HMAC-Schlüssel: wichtig, damit gespeicherte Bestenlisten-Einträge
 // nach einem Server-Neustart weiterhin geprüft und wiederhergestellt werden können.
 // Reihenfolge: eigener Schlüssel, Render-Service-ID, Upstash-Token oder lokale Schlüsseldatei.
@@ -114,10 +112,7 @@ async function flush() {
     timer = setTimeout(flush, 15000);
   }
 }
-process.on('SIGTERM', async () => {
-  await Promise.race([Promise.all([flush(), persistPartiesNow()]), new Promise(r => setTimeout(r, 8000))]);
-  process.exit(0);
-});   // Render beendet den Server: Konten und Partys vorher speichern
+process.on('SIGTERM', async () => { await Promise.race([flush(), new Promise(r => setTimeout(r, 8000))]); process.exit(0); });   // Render beendet den Server: vorher noch speichern
 
 const hx = s => String(s).replace(/[&<>"]/g, c => '&#' + c.charCodeAt(0) + ';');
 const storageText = () => USE_UP ? (dbOk ? 'Upstash (dauerhaft)' : 'Upstash FEHLER: ' + dbError) : process.env.DATA_DIR ? 'Datenträger' : 'Datei (geht bei Neustart verloren)';
@@ -149,73 +144,14 @@ const pn = o => ({ w: Number(o && o.w) | 0, b: Number(o && o.b) | 0 }), ps = o =
 const cleanPresets = a => (Array.isArray(a) ? a : []).slice(0, 8).map(p => ({ n: String((p && p.n) || 'Preset').slice(0, 14), th: pn(p && p.th), col: ps(p && p.col), ef: ps(p && p.ef) }));
 
 // Spieler aus Warteschlange und Raum entfernen, Gegner informieren
-function leave(s, explicit = false) {
+function leave(s) {
   queue = queue.filter(q => q.id !== s.id);
   const code = s.data.room;
   if (!code) return;
-  s.data.room = null;
-  s.leave(code);
+  s.data.room = null; s.leave(code);
   const r = rooms.get(code);
   if (!r) return;
-  if (r.kind === 'party') {
-    const p = r.players.find(x => x.id === s.id);
-    if (p) {
-      p.id = null;
-      p.connected = false;
-      p.lastSeen = Date.now();
-      if (explicit) {
-        r.teams = r.teams || { w: [], b: [] };
-        // Team-Partien bleiben offen: der Leiter kann den freien Platz mit
-        // einem anderen Party-Mitglied besetzen. Einzelpartien werden gewertet.
-        r.teams.w = (r.teams.w || []).filter(k => k !== p.key);
-        r.teams.b = (r.teams.b || []).filter(k => k !== p.key);
-        for (const g of Object.values(r.matches || {})) {
-          if (g.status !== 'playing') continue;
-          if (g.kind === 'team') {
-            const side = g.white.includes(p.key) ? 'w' : g.black.includes(p.key) ? 'b' : null;
-            if (side) {
-              const roster = side === 'w' ? g.white : g.black;
-              // Entferne nur dann sofort, wenn noch ein Teammitglied übrig ist.
-              // Bei letzter Person bleibt der Platz reserviert, bis der Leiter ersetzt.
-              if (roster.length > 1) {
-                const oldIndex = roster.indexOf(p.key);
-                roster.splice(oldIndex, 1);
-                const next = g.turnIndex[side] || 0;
-                g.turnIndex[side] = roster.length ? Math.max(0, next - (oldIndex < next ? 1 : 0)) % roster.length : 0;
-              }
-              notifyPartyGameUpdate(r, g);
-            }
-          } else if (g.white.includes(p.key)) finishPartyMatch(r, g, 'b', 'Spieler hat die Party verlassen');
-          else if (g.black.includes(p.key)) finishPartyMatch(r, g, 'w', 'Spieler hat die Party verlassen');
-        }
-        if (r.ffa && !r.ffa.over && ffaOwnerAlive(r.ffa, p.key)) {
-          const f = r.ffa, victim = f.players.find(x => x.key === p.key);
-          if (victim) victim.alive = false;
-          f.board = f.board.map(piece => piece && piece.owner === p.key ? null : piece);
-          const oldOrder = f.order.slice(), oldTurnKey = f.order[f.turnIndex];
-          f.order = f.order.filter(k => k !== p.key);
-          if (f.order.length <= 1) { f.over = true; f.winner = f.order[0] || null; }
-          else if (oldTurnKey === p.key) {
-            const nextKey = oldOrder.slice(f.turnIndex + 1).concat(oldOrder.slice(0, f.turnIndex)).find(k => f.order.includes(k));
-            f.turnIndex = Math.max(0, f.order.indexOf(nextKey));
-          } else f.turnIndex = Math.max(0, f.order.indexOf(oldTurnKey));
-          sendFFA(r);
-        }
-        r.players = r.players.filter(x => x.key !== p.key);
-      }
-      if (r.host === p.key && explicit) r.host = r.players.find(x => x.connected)?.key || (r.players[0] ? r.players[0].key : null);
-    }
-    if (!r.players.length) rooms.delete(code);
-    else {
-      // Laufende Spiele bleiben bestehen. Bei Verbindungsabbruch kann derselbe
-      // Account mit seinem Namen wieder beitreten.
-      if (explicit && !r.players.length) rooms.delete(code);
-      else emitParty(r);
-    }
-    saveParties();
-    return;
-  }
-  if (r.kind === 'match' && (r.moves || 0) >= 8 && !r.done) {
+  if (r.kind === 'match' && (r.moves || 0) >= 8 && !r.done) {   // wer geht, verliert
     const oid = s.id === r.w ? r.b : r.w;
     if (!r.res[s.id]) r.res[s.id] = r.res[oid] ? COMP[r.res[oid]] : 'loss';
     if (!r.res[oid]) r.res[oid] = COMP[r.res[s.id]];
@@ -264,333 +200,22 @@ function claim(r, s, res) {
 }
 
 const NAME_RE = /^[\wäöüÄÖÜß.-]{3,16}$/;
-const TCS = [1, 3, 5, 10, 15, 30];             // Bedenkzeiten in Minuten
+const TCS = [1, 3, 5, 10];                       // Bedenkzeiten in Minuten
 const BOT_R = [20, 60, 120, 250, 500];           // Gold beim ersten Sieg gegen Bot-Stufe 1 bis 5
 const byKey = {};                                // Name (klein) -> Sockets (für Online-Status)
 const invites = new Map();
 const low = u => u.name.toLowerCase();
-const tcOf = v => (TCS.includes(+v) ? +v : int(v, 1, 180, 5));
+const tcOf = v => (TCS.includes(+v) ? +v : 5);
 const int = (v, lo, hi, def) => Math.min(hi, Math.max(lo, Math.round(+v) || def));
 const onSocks = k => (byKey[k] || []).filter(x => x.connected !== false);
 const offline = s => { const u = s.data.user; if (!u) return; const a = byKey[low(u)]; if (a) { const i = a.indexOf(s); if (i >= 0) a.splice(i, 1); } };
 const friendRows = u => (u.fr || []).map(k => { const f = users[k]; if (!f) return null; const so = onSocks(k); return { n: f.name, e: f.elo, a: f.av | 0, on: so.length > 0, busy: so.length > 0 && so.every(x => x.data.room) }; }).filter(Boolean);
 function newRoom(kind, tc, a, b) {
   const code = code6();
-  rooms.set(code, { code, kind, tc, w: a.id, b: b.id, fen: new Chess().fen(), res: {}, e: { [a.id]: a.data.elo, [b.id]: b.data.elo }, u: { [a.id]: a.data.user, [b.id]: b.data.user } });
+  rooms.set(code, { code, kind, tc, w: a.id, b: b.id, res: {}, e: { [a.id]: a.data.elo, [b.id]: b.data.elo }, u: { [a.id]: a.data.user, [b.id]: b.data.user } });
   for (const x of [a, b]) { x.data.room = code; x.join(code); }
   return rooms.get(code);
 }
-
-
-// ---- Mehrspieler-Partys: getrennte Matches, Turnier, Teams und FFA ----
-const PARTY_MODES = new Set(['normal', 'tournament', 'ffa', 'team']);
-const FFA_COLORS = ['#2979ff', '#ff1744', '#00c853', '#ff9100'];
-const FFA_BACK = 'rnbqkbnr';
-const idxSquare = i => 'abcdefgh'[i & 7] + String(8 - (i >> 3));
-const keyOf = name => String(name || '').trim().toLowerCase();
-const randomId = () => crypto.randomBytes(5).toString('hex');
-const shuffle = a => { const x = a.slice(); for (let i = x.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [x[i], x[j]] = [x[j], x[i]]; } return x; };
-const chessFrom = fen => { const c = new Chess(); if (fen) c.load(fen); return c; };
-const playerIn = (r, key) => r.players.find(p => p.key === key);
-const socketForKey = (r, key) => { const p = playerIn(r, key); return p && p.id ? sock(p.id) : null; };
-const currentSide = g => (g.fen || '').split(' ')[1] === 'b' ? 'b' : 'w';
-function partyClock(g, now = Date.now()) {
-  const side = currentSide(g);
-  if (g.status === 'playing' && g.clock && g.lastTick) {
-    const dt = Math.max(0, now - g.lastTick);
-    g.clock[side] = Math.max(0, g.clock[side] - dt);
-    g.lastTick = now;
-  }
-  return { w: Math.max(0, g.clock?.w || 0), b: Math.max(0, g.clock?.b || 0) };
-}
-function nextTeamActor(g, side) {
-  const team = side === 'w' ? g.white : g.black;
-  if (!team || !team.length) return null;
-  return team[(g.turnIndex[side] || 0) % team.length];
-}
-function publicMatch(r, g) {
-  const c = partyClock(g);
-  const side = currentSide(g), actor = nextTeamActor(g, side);
-  return {
-    id: g.id, kind: g.kind, status: g.status, time: g.tc, white: (g.white || []).map(k => playerIn(r, k)?.name || k),
-    black: (g.black || []).map(k => playerIn(r, k)?.name || k), whiteKeys: g.white, blackKeys: g.black,
-    fen: g.fen, moveCount: (g.moves || []).length, result: g.result || null, teamConfig: g.kind === 'team' ? (g.teamConfig || r.teamConfig) : null,
-    actor: playerIn(r, actor)?.name || actor, side, clock: c, round: g.round || 0
-  };
-}
-function publicFFA(r) {
-  const f = r.ffa;
-  if (!f) return null;
-  return {
-    size: f.size,
-    board: f.board.map(piece => piece ? {
-      owner: playerIn(r, piece.owner)?.name || piece.owner,
-      type: piece.type,
-      color: f.players.find(p => p.key === piece.owner)?.color || '#fff'
-    } : null),
-    players: f.players.map(p => ({ name: playerIn(r, p.key)?.name || p.key, color: p.color, alive: p.alive, direction: p.direction })),
-    order: f.order.slice(f.turnIndex).concat(f.order.slice(0, f.turnIndex)).map(k => playerIn(r, k)?.name || k),
-    turn: playerIn(r, f.order[f.turnIndex])?.name || f.order[f.turnIndex] || null,
-    over: !!f.over, winner: f.winner ? (playerIn(r, f.winner)?.name || f.winner) : null,
-    history: f.history.slice(-80)
-  };
-}
-function publicParty(r, viewer) {
-  const me = viewer && playerIn(r, viewer);
-  return {
-    code: r.code, host: r.host, me: viewer || null, isHost: !!(viewer && r.host === viewer), mode: r.mode,
-    settings: r.settings,
-    players: r.players.map(p => ({ name: p.name, key: p.key, elo: p.elo, avatar: p.avatar, connected: !!p.connected,
-      team: r.teams?.w?.includes(p.key) ? 'w' : r.teams?.b?.includes(p.key) ? 'b' : '' })),
-    pairings: r.pairings || [], teams: r.teams || { w: [], b: [] }, teamConfig: r.teamConfig || { wName: 'Team Weiß', bName: 'Team Schwarz', wColor: '#ffffff', bColor: '#1a1a1a' },
-    matches: Object.values(r.matches || {}).map(g => publicMatch(r, g)),
-    tournament: r.tournament ? { rounds: r.tournament.rounds, champion: r.tournament.champion, finished: !!r.tournament.finished, current: r.tournament.current } : null,
-    ffa: publicFFA(r), started: !!r.started, canStart: !!(me && r.host === viewer)
-  };
-}
-function emitParty(r) {
-  if (!r || r.kind !== 'party') return;
-  io.to(r.code).emit('room:state', { state: publicParty(r, null) });
-  saveParties();
-}
-function emitPartyTo(s, r, key) {
-  s.emit('room:state', { state: publicParty(r, key) });
-}
-function partySnapshot(r) {
-  return {
-    code: r.code, kind: 'party', host: r.host, mode: r.mode, settings: r.settings,
-    players: r.players.map(p => ({ ...p, id: null, connected: false })),
-    pairings: r.pairings || [], teams: r.teams || { w: [], b: [] }, teamConfig: r.teamConfig || { wName: 'Team Weiß', bName: 'Team Schwarz', wColor: '#ffffff', bColor: '#1a1a1a' }, matches: r.matches || {},
-    tournament: r.tournament || null, ffa: r.ffa || null, started: !!r.started, updatedAt: Date.now()
-  };
-}
-let partySaveTimer = null;
-async function persistPartiesNow() {
-  try {
-    const data = [...rooms.values()].filter(r => r.kind === 'party' && r.players?.length).map(partySnapshot);
-    if (USE_UP && dbOk) await up(['SET', PARTY_KEY, JSON.stringify(data)]);
-    else { fs.mkdirSync(DIR, { recursive: true }); fs.writeFileSync(path.join(DIR, 'parties.json.tmp'), JSON.stringify(data)); fs.renameSync(path.join(DIR, 'parties.json.tmp'), path.join(DIR, 'parties.json')); }
-  } catch (e) { console.error('Party-Speicherung fehlgeschlagen:', e.message); }
-}
-function saveParties() {
-  clearTimeout(partySaveTimer);
-  partySaveTimer = setTimeout(persistPartiesNow, 250);
-}
-async function loadParties() {
-  try {
-    let data = [];
-    if (USE_UP && dbOk) {
-      const raw = await up(['GET', PARTY_KEY]);
-      if (raw) data = JSON.parse(raw);
-    } else {
-      const file = path.join(DIR, 'parties.json');
-      if (fs.existsSync(file)) data = JSON.parse(fs.readFileSync(file, 'utf8'));
-    }
-    for (const old of (Array.isArray(data) ? data : [])) {
-      if (!old || old.kind !== 'party' || !/^\d{6}$/.test(old.code) || !Array.isArray(old.players)) continue;
-      // Sehr alte, verlassene Lobbys werden nicht unbegrenzt wiederhergestellt.
-      if (Date.now() - (old.updatedAt || Date.now()) > 7 * 24 * 60 * 60 * 1000) continue;
-      old.players = old.players.map(p => ({ ...p, id: null, connected: false }));
-      old.matches = old.matches || {}; old.settings = old.settings || { time: 5 }; old.pairings = old.pairings || []; old.teams = old.teams || { w: [], b: [] }; old.teamConfig = old.teamConfig || { wName: 'Team Weiß', bName: 'Team Schwarz', wColor: '#ffffff', bColor: '#1a1a1a' };
-      for (const g of Object.values(old.matches)) if (g.status === 'playing') g.lastTick = Date.now();
-      rooms.set(old.code, old);
-    }
-  } catch (e) { console.error('Gespeicherte Partys konnten nicht geladen werden:', e.message); }
-}
-function addPartyPlayer(r, s, u) {
-  const key = keyOf(u.name);
-  let p = playerIn(r, key);
-  if (!p) {
-    if (r.players.length >= 16) return null;
-    p = { key, name: u.name, id: s.id, elo: u.elo || 300, avatar: u.av | 0, connected: true, joinedAt: Date.now() };
-    r.players.push(p);
-  } else {
-    if (p.id && p.id !== s.id) {
-      const old = sock(p.id);
-      if (old) { old.data.room = null; old.leave(r.code); offline(old); old.emit('room:error', { message: 'Dein Account wurde in dieser Party auf einem anderen Tab verbunden.' }); }
-    }
-    p.id = s.id; p.name = u.name; p.elo = u.elo || 300; p.avatar = u.av | 0; p.connected = true;
-  }
-  s.data.room = r.code; s.join(r.code);
-  return p;
-}
-function resumeParty(s, u) {
-  const key = keyOf(u.name);
-  for (const r of rooms.values()) {
-    if (r.kind !== 'party' || !playerIn(r, key)) continue;
-    const p = addPartyPlayer(r, s, u);
-    if (!p) return;
-    emitParty(r);
-    emitPartyTo(s, r, key);
-    const active = Object.values(r.matches || {}).find(g => g.status === 'playing' && [...g.white, ...g.black].includes(key));
-    if (active) sendPartyGameStart(s, r, active, key, false);
-    if (r.mode === 'ffa' && r.ffa && !r.ffa.over) s.emit('ffa:start', { state: publicFFA(r) });
-    return;
-  }
-}
-function notifyPartyGameUpdate(r, g, extra = {}) {
-  const side = currentSide(g), actor = nextTeamActor(g, side), clock = partyClock(g);
-  io.to(r.code).emit('party:game-update', { gameId: g.id, actor: playerIn(r, actor)?.name || actor, side, clock, status: g.status, result: g.result || null, teamConfig: g.kind === 'team' ? (g.teamConfig || r.teamConfig) : null, ...extra });
-}
-function sendPartyGameStart(s, r, g, key, spectator) {
-  const side = g.white.includes(key) ? 'w' : g.black.includes(key) ? 'b' : 's';
-  const opp = side === 'w' ? g.black : side === 'b' ? g.white : g.white;
-  const actor = nextTeamActor(g, currentSide(g));
-  const myTurn = !spectator && actor === key;
-  s.emit('game:start', {
-    code: r.code, side, kind: 'party', partyGameId: g.id, partyMode: g.kind, spectator: !!spectator,
-    tc: g.tc || r.settings.time, fen: g.fen, moves: g.moves || [], clock: partyClock(g), actor: playerIn(r, actor)?.name || actor, teamConfig: g.kind === 'team' ? (g.teamConfig || r.teamConfig) : null,
-    canMove: myTurn, finished: g.status === 'done', result: g.result || null, opp: { n: opp.map(k => playerIn(r, k)?.name || k).join(' + ') || 'Zuschauer', e: 0, a: 0 }
-  });
-}
-function makePartyMatch(r, white, black, meta = {}) {
-  const id = randomId(), minutes = Math.max(1, Math.min(180, +r.settings.time || 5)), chess = new Chess();
-  const g = {
-    id, kind: meta.kind || r.mode, round: meta.round || 0, bracketMatchId: meta.bracketMatchId || null, tc: minutes, teamConfig: (meta.kind || r.mode) === 'team' ? { ...r.teamConfig } : null,
-    white: white.slice(), black: black.slice(), fen: chess.fen(), moves: [], status: 'playing', result: null,
-    turnIndex: { w: 0, b: 0 }, clock: { w: minutes * 60000, b: minutes * 60000 }, lastTick: Date.now(), createdAt: Date.now()
-  };
-  r.matches[id] = g;
-  for (const key of [...white, ...black]) { const ps = socketForKey(r, key); if (ps) sendPartyGameStart(ps, r, g, key, false); }
-  notifyPartyGameUpdate(r, g);
-  return g;
-}
-function setTournamentWinner(r, g, winnerKey, reason) {
-  const t = r.tournament; if (!t) return;
-  const round = t.rounds[g.round] || [];
-  const m = round.find(x => x.gameId === g.id || x.id === g.bracketMatchId);
-  if (!m || m.winner) return;
-  if (!winnerKey) winnerKey = Math.random() < 0.5 ? g.white[0] : g.black[0];
-  m.winner = winnerKey; m.loser = m.w === winnerKey ? m.b : m.w;
-  m.result = reason || (winnerKey ? 'Sieg' : 'Remis'); m.status = 'done';
-  advanceTournament(r);
-}
-function advanceTournament(r) {
-  const t = r.tournament; if (!t || t.finished) return;
-  const round = t.rounds[t.current] || [];
-  if (!round.length || round.some(m => !m.winner)) return;
-  const winners = round.map(m => m.winner).filter(Boolean);
-  if (winners.length <= 1) {
-    t.champion = winners[0] || null; t.finished = true; emitParty(r); return;
-  }
-  const next = []; let pool = winners.slice();
-  if (pool.length % 2) { const bye = pool.pop(); next.push({ id: randomId(), w: bye, b: null, winner: bye, bye: true, status: 'done', result: 'Freilos' }); }
-  while (pool.length) {
-    const w = pool.shift(), b = pool.shift(), id = randomId();
-    const m = { id, w, b, winner: null, status: 'playing' };
-    next.push(m);
-    const g = makePartyMatch(r, [w], [b], { kind: 'tournament', round: t.current + 1, bracketMatchId: id });
-    m.gameId = g.id;
-  }
-  t.rounds.push(next); t.current++;
-  emitParty(r);
-}
-function startTournament(r, keys) {
-  const ordered = shuffle(keys), target = 2 ** Math.ceil(Math.log2(ordered.length)), byes = target - ordered.length;
-  const first = [];
-  for (let i = 0; i < byes; i++) first.push({ id: randomId(), w: ordered[i], b: null, winner: ordered[i], bye: true, status: 'done', result: 'Freilos' });
-  const rest = ordered.slice(byes);
-  while (rest.length) {
-    const w = rest.shift(), b = rest.shift(), id = randomId();
-    first.push({ id, w, b, winner: null, status: 'playing' });
-  }
-  r.tournament = { rounds: [first], current: 0, champion: null, finished: false, createdAt: Date.now() };
-  for (const m of first) if (m.b) { const g = makePartyMatch(r, [m.w], [m.b], { kind: 'tournament', round: 0, bracketMatchId: m.id }); m.gameId = g.id; }
-  advanceTournament(r);
-  emitParty(r);
-}
-function finishPartyMatch(r, g, winnerSide, reason) {
-  if (!g || g.status !== 'playing') return;
-  g.status = 'done';
-  const winner = winnerSide === 'w' ? g.white[0] : winnerSide === 'b' ? g.black[0] : null;
-  g.result = { winnerSide: winnerSide || null, winner, reason: reason || (winner ? 'Sieg' : 'Remis'), at: Date.now() };
-  if (g.kind === 'tournament') setTournamentWinner(r, g, winner, g.result.reason);
-  notifyPartyGameUpdate(r, g);
-  io.to(r.code).emit('party:game-finished', { gameId: g.id, result: g.result });
-  emitParty(r);
-}
-let lastPartyClockPersist = 0;
-function tickPartyGames() {
-  const now = Date.now();
-  for (const r of rooms.values()) {
-    if (r.kind !== 'party') continue;
-    let changed = false;
-    for (const g of Object.values(r.matches || {})) {
-      if (g.status !== 'playing') continue;
-      const before = currentSide(g), clock = partyClock(g, now);
-      if (clock[before] <= 0) { const c = chessFrom(g.fen), draw = c.isInsufficientMaterial(); finishPartyMatch(r, g, draw ? null : (before === 'w' ? 'b' : 'w'), draw ? 'Zeit abgelaufen · Remis (nicht mattsetzbares Material)' : 'Zeit abgelaufen'); changed = true; }
-      else notifyPartyGameUpdate(r, g);
-    }
-    if (changed) saveParties();
-  }
-  // Laufende Uhren regelmäßig sichern, damit ein unerwarteter Prozessabbruch
-  // nicht die seit dem letzten Zug verstrichene Zeit zurücksetzt.
-  if (now - lastPartyClockPersist >= 10000) {
-    lastPartyClockPersist = now;
-    if ([...rooms.values()].some(r => r.kind === 'party' && Object.values(r.matches || {}).some(g => g.status === 'playing'))) saveParties();
-  }
-}
-setInterval(tickPartyGames, 1000).unref();
-
-// Vier-Seiten-Schach: quadratisches, mit der Spielerzahl wachsendes Brett.
-// Der König darf geschlagen werden; dadurch scheidet seine ganze Armee aus.
-function makeFFA(r, keys) {
-  const size = Math.max(16, 12 + keys.length * 2), board = Array(size * size).fill(null), offset = Math.floor((size - 8) / 2);
-  const dirs = ['top', 'right', 'bottom', 'left'];
-  const fplayers = keys.map((key, i) => ({ key, color: FFA_COLORS[i], alive: true, direction: dirs[i] }));
-  const put = (x, y, owner, type) => { if (x >= 0 && y >= 0 && x < size && y < size) board[y * size + x] = { owner, type }; };
-  for (const pl of fplayers) {
-    const back = FFA_BACK.split('');
-    if (pl.direction === 'top') {
-      back.forEach((t, i) => put(offset + i, 0, pl.key, t)); put(offset + 3, 1, pl.key, 'p'); put(offset + 4, 1, pl.key, 'p');
-    } else if (pl.direction === 'bottom') {
-      back.forEach((t, i) => put(offset + i, size - 1, pl.key, t)); put(offset + 3, size - 2, pl.key, 'p'); put(offset + 4, size - 2, pl.key, 'p');
-    } else if (pl.direction === 'left') {
-      back.forEach((t, i) => put(0, offset + i, pl.key, t)); put(1, offset + 3, pl.key, 'p'); put(1, offset + 4, pl.key, 'p');
-    } else {
-      back.forEach((t, i) => put(size - 1, offset + i, pl.key, t)); put(size - 2, offset + 3, pl.key, 'p'); put(size - 2, offset + 4, pl.key, 'p');
-    }
-  }
-  r.ffa = { size, board, players: fplayers, order: keys.slice(), turnIndex: 0, over: false, winner: null, history: [], startedAt: Date.now() };
-  r.started = true;
-}
-function ffaOwnerAlive(f, key) { const p = f.players.find(x => x.key === key); return !!(p && p.alive); }
-function ffaPathClear(f, x1, y1, x2, y2) {
-  const dx = Math.sign(x2 - x1), dy = Math.sign(y2 - y1); let x = x1 + dx, y = y1 + dy;
-  while (x !== x2 || y !== y2) { if (f.board[y * f.size + x]) return false; x += dx; y += dy; }
-  return true;
-}
-function ffaLegal(f, owner, from, to) {
-  const n = f.size, b = f.board;
-  if (![from, to].every(v => Number.isInteger(v) && v >= 0 && v < n * n) || from === to) return false;
-  const a = b[from], z = b[to]; if (!a || a.owner !== owner || (z && z.owner === owner)) return false;
-  const x1 = from % n, y1 = Math.floor(from / n), x2 = to % n, y2 = Math.floor(to / n), dx = x2 - x1, dy = y2 - y1;
-  const pl = f.players.find(p => p.key === owner), dir = pl?.direction;
-  const forward = dir === 'top' ? [0, 1] : dir === 'bottom' ? [0, -1] : dir === 'left' ? [1, 0] : [-1, 0];
-  const ax = Math.abs(dx), ay = Math.abs(dy), type = a.type;
-  if (type === 'n') return (ax === 1 && ay === 2) || (ax === 2 && ay === 1);
-  if (type === 'k') return Math.max(ax, ay) === 1;
-  if (type === 'p') {
-    const dot = dx * forward[0] + dy * forward[1];
-    const cross = Math.abs(dx * forward[1] - dy * forward[0]);
-    if (!z) return dot === 1 && cross === 0;
-    return dot === 1 && cross === 1;
-  }
-  const diagonal = ax === ay && ax > 0, straight = (dx === 0) !== (dy === 0);
-  if (type === 'b' && !diagonal) return false;
-  if (type === 'r' && !straight) return false;
-  if (type === 'q' && !diagonal && !straight) return false;
-  if (!diagonal && !straight) return false;
-  return ffaPathClear(f, x1, y1, x2, y2);
-}
-function ffaNextTurn(f) {
-  if (f.over) return;
-  for (let i = 0; i < f.order.length; i++) {
-    f.turnIndex = (f.turnIndex + 1) % f.order.length;
-    if (ffaOwnerAlive(f, f.order[f.turnIndex])) return;
-  }
-}
-function sendFFA(r) { io.to(r.code).emit('ffa:state', { state: publicFFA(r) }); saveParties(); }
 
 io.on('connection', s => {
   s.data.room = null; s.data.elo = 300;
@@ -598,12 +223,11 @@ io.on('connection', s => {
   const U = () => s.data.user, room = () => rooms.get(s.data.room);
   const need = () => { if (U()) return true; s.emit('room:error', { message: 'Bitte zuerst anmelden.' }); return false; };
 
-  const ok = (u, resume = true) => {
+  const ok = u => {
     if (u.v !== 3) { if (!(u.v >= 2)) u.elo = 300; u.v = 3; u.coins = 0; u.bots = u.bots || []; u.fr = u.fr || []; u.av = u.av | 0; saveUsers(); }   // Gold startet bei 0
     s.data.user = u; s.data.elo = u.elo;
     const k = low(u); byKey[k] = byKey[k] || []; if (!byKey[k].includes(s)) byKey[k].push(s);
     s.emit('auth:ok', { token: u.tok, profile: pub(u), shop: SHOP, cred: { salt: u.salt, hash: u.hash }, persist: persistOK(), fr: u.fr });
-    if (resume) resumeParty(s, u);
   };
 
   // ---- Konto ----
@@ -614,19 +238,19 @@ io.on('connection', s => {
     if (users[k] || ghosts[k]) return s.emit('auth:fail', { message: 'Dieser Name ist schon vergeben. Ist es dein Name? Dann melde dich an.' });
     const salt = crypto.randomBytes(8).toString('hex');
     const u = users[k] = { name: n, salt, hash: hash(p, salt), tok: crypto.randomBytes(24).toString('hex'), coins: 0, elo: 300, owned: [], presets: [], av: 0, v: 3, bots: [], fr: [] };
-    saveUsers(); ok(u, !(d && d.noPartyResume));
+    saveUsers(); ok(u);
   });
   s.on('auth:login', d => {
     const u = users[String((d && d.name) || '').trim().toLowerCase()];
     if (!u || hash(String(d.pass || ''), u.salt) !== u.hash) return s.emit('auth:fail', { message: 'Name oder Passwort stimmt nicht.' });
-    ok(u, !(d && d.noPartyResume));
+    ok(u);
   });
   s.on('auth:token', d => {
     const u = users[String((d && d.name) || '').toLowerCase()];
     if (!u || u.tok !== (d && d.token)) return s.emit('auth:fail', { silent: true });
-    ok(u, !(d && d.noPartyResume));
+    ok(u);
   });
-  s.on('auth:logout', () => { leave(s, true); offline(s); s.data.user = null; });
+  s.on('auth:logout', () => { leave(s); offline(s); s.data.user = null; });
 
   // Konto nach Server-Neustart vom Gerät wiederherstellen (Name muss frei sein)
   s.on('auth:restore', d => {
@@ -634,7 +258,7 @@ io.on('connection', s => {
     const n = String(d.name || '').trim(), k = n.toLowerCase(), p = d.profile || {};
     if (!NAME_RE.test(n) || !/^[0-9a-f]{16}$/.test(d.salt) || !/^[0-9a-f]{64}$/.test(d.hash) || !/^[0-9a-f]{48}$/.test(d.token))
       return s.emit('auth:fail', { message: 'Konto konnte nicht wiederhergestellt werden.' });
-    if (users[k]) return users[k].tok === d.token ? ok(users[k], !(d && d.noPartyResume)) : s.emit('auth:fail', { message: 'Dein Name ist inzwischen vergeben. Melde dich an oder wähle einen neuen Namen.' });
+    if (users[k]) return users[k].tok === d.token ? ok(users[k]) : s.emit('auth:fail', { message: 'Dein Name ist inzwischen vergeben. Melde dich an oder wähle einen neuen Namen.' });
     const owned = [...new Set((Array.isArray(p.owned) ? p.owned : []).filter(id => SHOP[id]))];
     const bots = [...new Set((Array.isArray(p.bots) ? p.bots : []).map(Number).filter(x => Number.isInteger(x) && x >= 0 && x < BOT_R.length))];
     const cand = { name: n, coins: Math.max(0, Math.round(+p.coins) || 0), elo: int(p.elo, 100, 3000, 300), owned, bots };
@@ -643,7 +267,7 @@ io.on('connection', s => {
       coins: p.v === 3 ? (good ? cand.coins : Math.min(cand.coins, 1000)) : 0, elo: p.v >= 2 ? (good ? cand.elo : Math.min(cand.elo, 600)) : 300,
       owned, bots: p.v === 3 || good ? bots : [], presets: cleanPresets(p.presets), av: int(p.av, 0, 23, 0), v: 3,
       fr: [...new Set((Array.isArray(d.fr) ? d.fr : []).map(x => String(x).toLowerCase()).filter(x => NAME_RE.test(x) && x !== k))].slice(0, 100) };
-    delete ghosts[k]; saveUsers(); ok(u, !(d && d.noPartyResume));
+    delete ghosts[k]; saveUsers(); ok(u);
   });
 
   s.on('profile:save', d => {
@@ -699,140 +323,28 @@ io.on('connection', s => {
     s.emit('lb:data', { top: rows.slice(0, 100).map(r => ({ n: r.n, e: r.e, a: r.a, s: lSig(r.n, r.e, r.a) })), rank: me ? rows.findIndex(r => r.k === me) + 1 : 0, total: rows.length });
   });
 
-  // ---- Private Party: Multiplayer-Lobby (der Leiter verwaltet alle Einstellungen) ----
+  // ---- Private Party ----
   s.on('room:create', d => {
     if (!need()) return;
-    if (s.data.room) leave(s, true);
-    const code = code6(), key = keyOf(U().name);
-    const r = { code, kind: 'party', host: key, mode: 'normal', settings: { time: tcOf(d && d.tc) },
-      players: [{ key, name: U().name, id: s.id, elo: U().elo, avatar: U().av | 0, connected: true, joinedAt: Date.now() }],
-      pairings: [], teams: { w: [], b: [] }, teamConfig: { wName: 'Team Weiß', bName: 'Team Schwarz', wColor: '#ffffff', bColor: '#1a1a1a' }, matches: {}, tournament: null, ffa: null, started: false, updatedAt: Date.now() };
-    rooms.set(code, r); s.data.room = code; s.join(code);
-    s.emit('room:created', { code }); emitParty(r); emitPartyTo(s, r, key);
+    leave(s); s.data.elo = U().elo;
+    const code = code6();
+    rooms.set(code, { code, kind: 'party', tc: tcOf(d && d.tc), w: s.id, b: null, res: {} });
+    s.data.room = code; s.join(code);
+    s.emit('room:created', { code });
   });
   s.on('room:join', d => {
     if (!need()) return;
+    leave(s); s.data.elo = U().elo;
     const code = String((d && d.code) || ''), r = rooms.get(code);
-    if (!/^\d{6}$/.test(code) || !r || r.kind !== 'party') return s.emit('room:error', { message: 'Diesen Party-Code gibt es nicht mehr.' });
-    if (s.data.room === code) { emitPartyTo(s, r, keyOf(U().name)); return; }
-    const joinKey = keyOf(U().name);
-    if (!playerIn(r, joinKey) && r.players.length >= 16) return s.emit('room:error', { message: 'Die Party ist voll (maximal 16 Spieler).' });
-    if (s.data.room) leave(s, true);
-    const p = addPartyPlayer(r, s, U());
-    if (!p) return s.emit('room:error', { message: 'Die Party ist voll (maximal 16 Spieler).' });
-    s.emit('room:joined', { code }); emitParty(r); emitPartyTo(s, r, p.key);
-    const active = Object.values(r.matches || {}).find(g => g.status === 'playing' && [...g.white, ...g.black].includes(p.key));
-    if (active) sendPartyGameStart(s, r, active, p.key, false);
-    if (r.mode === 'ffa' && r.ffa && !r.ffa.over) s.emit('ffa:start', { state: publicFFA(r) });
+    if (!/^\d{6}$/.test(code) || !r) return s.emit('room:error', { message: 'Diesen Code gibt es nicht.' });
+    if (r.b) return s.emit('room:error', { message: 'Die Party ist schon voll.' });
+    r.b = s.id; s.data.room = code; s.join(code);
+    s.emit('room:joined', { code });
+    const host = sock(r.w); if (host) host.emit('room:ready', { code });
+    start(r);
   });
-  s.on('room:state:get', () => { const r = room(); if (r && r.kind === 'party') emitPartyTo(s, r, keyOf(U().name)); });
-  s.on('room:leave', () => leave(s, true));
-  s.on('room:update', d => {
-    const r = room(), key = U() && keyOf(U().name);
-    if (!r || r.kind !== 'party' || r.host !== key) return s.emit('room:error', { message: 'Nur der Party-Leiter darf Einstellungen ändern.' });
-    if (Object.values(r.matches || {}).some(g => g.status === 'playing') || (r.ffa && !r.ffa.over)) return s.emit('room:error', { message: 'Während laufender Spiele können die Modi nicht gewechselt werden.' });
-    const mode = String(d && d.mode || r.mode), changed = PARTY_MODES.has(mode) && mode !== r.mode;
-    if (changed) r.mode = mode;
-    if (d && d.time !== undefined) r.settings.time = int(d.time, 1, 180, r.settings.time || 5);
-    if (changed) { r.started = false; r.tournament = null; r.ffa = null; r.pairings = []; r.teams = { w: [], b: [] }; }
-    emitParty(r);
-  });
-  s.on('room:pairings', d => {
-    const r = room(), key = U() && keyOf(U().name);
-    if (!r || r.kind !== 'party' || r.host !== key || r.mode !== 'normal') return;
-    if (Object.values(r.matches || {}).some(g => g.status === 'playing')) return s.emit('room:error', { message: 'Paarungen können während laufender Partien nicht geändert werden.' });
-    const pairs = Array.isArray(d && d.pairs) ? d.pairs.slice(0, 8) : [], used = new Set(), cleanPairs = [];
-    for (const pair of pairs) {
-      const w = keyOf(pair && pair.w), b = keyOf(pair && pair.b);
-      if (!w || !b || w === b || !playerIn(r, w) || !playerIn(r, b) || used.has(w) || used.has(b)) continue;
-      used.add(w); used.add(b); cleanPairs.push({ w, b });
-    }
-    r.pairings = cleanPairs; emitParty(r);
-  });
-  s.on('room:teams', d => {
-    const r = room(), key = U() && keyOf(U().name);
-    if (!r || r.kind !== 'party' || r.host !== key || r.mode !== 'team') return;
-    const available = new Set(r.players.filter(p => p.connected).map(p => p.key));
-    const w = [...new Set((Array.isArray(d && d.w) ? d.w : []).map(keyOf).filter(k => available.has(k)))];
-    const b = [...new Set((Array.isArray(d && d.b) ? d.b : []).map(keyOf).filter(k => available.has(k) && !w.includes(k)))];
-    const liveTeamGame = Object.values(r.matches || {}).some(g => g.kind === 'team' && g.status === 'playing');
-    if (liveTeamGame && (!w.length || !b.length)) return s.emit('room:error', { message: 'Während einer laufenden Team-Partie muss jedes Team mindestens einen verbundenen Spieler haben.' });
-    r.teams = { w, b };
-    const tc = d && d.config || {};
-    r.teamConfig = { wName: String(tc.wName || r.teamConfig.wName).replace(/[&<>\"']/g, '').trim().slice(0, 20) || 'Team Weiß', bName: String(tc.bName || r.teamConfig.bName).replace(/[&<>\"']/g, '').trim().slice(0, 20) || 'Team Schwarz',
-      wColor: /^#[0-9a-f]{6}$/i.test(tc.wColor || '') ? tc.wColor : r.teamConfig.wColor, bColor: /^#[0-9a-f]{6}$/i.test(tc.bColor || '') ? tc.bColor : r.teamConfig.bColor };
-    for (const g of Object.values(r.matches || {})) if (g.kind === 'team' && g.status === 'playing') {
-      g.white = w.slice(); g.black = b.slice(); g.teamConfig = { ...r.teamConfig };
-      g.turnIndex.w = 0; g.turnIndex.b = 0;
-      notifyPartyGameUpdate(r, g);
-    }
-    emitParty(r);
-  });
-  s.on('room:start', d => {
-    const r = room(), key = U() && keyOf(U().name);
-    if (!r || r.kind !== 'party' || r.host !== key) return s.emit('room:error', { message: 'Nur der Party-Leiter kann starten.' });
-    const active = Object.values(r.matches || {}).some(g => g.status === 'playing');
-    if (active || (r.ffa && !r.ffa.over)) return s.emit('room:error', { message: 'Es läuft bereits ein Spiel.' });
-    const connected = r.players.filter(p => p.connected).map(p => p.key);
-    if (r.mode === 'normal') {
-      const pairs = r.pairings || [];
-      if (!pairs.length) return s.emit('room:error', { message: 'Lege zuerst mindestens eine Paarung fest.' });
-      const previousMatches = Object.keys(r.matches || {}).length;
-      for (const p of pairs) {
-        if (!connected.includes(p.w) || !connected.includes(p.b)) continue;
-        makePartyMatch(r, [p.w], [p.b], { kind: 'normal' });
-      }
-      if (Object.keys(r.matches).length === previousMatches) return s.emit('room:error', { message: 'Die ausgewählten Spieler sind nicht mehr verbunden.' });
-      r.started = true; emitParty(r);
-    } else if (r.mode === 'tournament') {
-      const keys = (Array.isArray(d && d.players) ? d.players.map(keyOf) : connected).filter((k, i, a) => playerIn(r, k) && connected.includes(k) && a.indexOf(k) === i);
-      if (keys.length < 2) return s.emit('room:error', { message: 'Für ein Turnier werden mindestens zwei verbundene Spieler benötigt.' });
-      r.started = true; startTournament(r, keys);
-    } else if (r.mode === 'team') {
-      let w = r.teams.w.filter(k => connected.includes(k)), b = r.teams.b.filter(k => connected.includes(k));
-      if (!w.length || !b.length) return s.emit('room:error', { message: 'Weise mindestens einen verbundenen Spieler jedem Team zu.' });
-      if (w.some(k => b.includes(k))) return s.emit('room:error', { message: 'Ein Spieler darf nur in einem Team sein.' });
-      const assigned = new Set([...w, ...b]);
-      const rest = connected.filter(k => !assigned.has(k));
-      rest.forEach((k, i) => (w.length <= b.length ? w : b).push(k));
-      r.teams = { w, b }; r.started = true;
-      makePartyMatch(r, w, b, { kind: 'team' }); emitParty(r);
-    } else if (r.mode === 'ffa') {
-      const keys = connected.slice(0, 4);
-      if (keys.length < 2) return s.emit('room:error', { message: 'Für Alle gegen Alle werden mindestens zwei verbundene Spieler benötigt.' });
-      makeFFA(r, keys); sendFFA(r); io.to(r.code).emit('ffa:start', { state: publicFFA(r) });
-    }
-  });
-  s.on('game:watch', d => {
-    const r = room(), key = U() && keyOf(U().name), g = r && r.kind === 'party' && r.matches[String(d && d.gameId || '')];
-    if (!g) return s.emit('room:error', { message: 'Diese Partie wurde nicht gefunden.' });
-    sendPartyGameStart(s, r, g, key, !g.white.includes(key) && !g.black.includes(key));
-  });
-  s.on('ffa:move', d => {
-    const r = room(), key = U() && keyOf(U().name), f = r && r.kind === 'party' && r.ffa;
-    if (!f || f.over || !d) return;
-    const current = f.order[f.turnIndex];
-    if (current !== key) return s.emit('room:error', { message: 'Du bist gerade nicht an der Reihe.' });
-    const from = Number(d.from), to = Number(d.to);
-    if (!ffaLegal(f, key, from, to)) return s.emit('room:error', { message: 'Dieser Zug ist nicht erlaubt.' });
-    const moving = f.board[from], captured = f.board[to];
-    f.board[to] = moving; f.board[from] = null;
-    const n = f.size, x = to % n, y = Math.floor(to / n), pl = f.players.find(p => p.key === key);
-    if (moving.type === 'p' && ((pl.direction === 'top' && y === n - 1) || (pl.direction === 'bottom' && y === 0) || (pl.direction === 'left' && x === n - 1) || (pl.direction === 'right' && x === 0))) moving.type = 'q';
-    let eliminated = null;
-    if (captured && captured.type === 'k') {
-      const victim = f.players.find(p => p.key === captured.owner);
-      if (victim) { victim.alive = false; eliminated = playerIn(r, victim.key)?.name || victim.key; }
-      f.board = f.board.map(piece => piece && piece.owner === captured.owner ? null : piece);
-      f.order = f.order.filter(k => k !== captured.owner);
-      if (f.order.length <= 1) { f.over = true; f.winner = f.order[0] || null; }
-      else f.turnIndex = Math.max(0, f.order.indexOf(key));
-    }
-    f.history.push({ player: playerIn(r, key)?.name || key, from, to, captured: captured ? captured.type : null, eliminated, at: Date.now() });
-    if (!f.over) ffaNextTurn(f);
-    sendFFA(r);
-    emitParty(r);
-  });
+  s.on('room:leave', () => leave(s));
+
   // ---- Gegnersuche je Bedenkzeit (1, 3, 5 oder 10 Minuten), Elo-nah ----
   s.on('match:join', d => {
     if (!need()) return;
@@ -848,60 +360,23 @@ io.on('connection', s => {
   });
   s.on('match:leave', () => { queue = queue.filter(q => q.id !== s.id); });
 
-  // ---- Im Spiel: klassische Matches plus servergeprüfte Party-Partien ----
+  // ---- Im Spiel ----
   s.on('game:move', d => {
     const r = room();
     if (!r || !d || !Number.isInteger(d.from) || !Number.isInteger(d.to)) return;
-    if (r.kind === 'party') {
-      const key = U() && keyOf(U().name), g = r.matches && r.matches[String(d.gameId || '')];
-      if (!g || g.status !== 'playing' || d.from < 0 || d.from > 63 || d.to < 0 || d.to > 63) return;
-      const side = currentSide(g), expected = nextTeamActor(g, side);
-      if (expected !== key || !(side === 'w' ? g.white : g.black).includes(key)) return s.emit('party:game-error', { gameId: g.id, message: 'Du bist nicht der nächste Spieler in deinem Team.' });
-      const clocks = partyClock(g);
-      if (clocks[side] <= 0) { const c = chessFrom(g.fen), draw = c.isInsufficientMaterial(); finishPartyMatch(r, g, draw ? null : (side === 'w' ? 'b' : 'w'), draw ? 'Zeit abgelaufen · Remis (nicht mattsetzbares Material)' : 'Zeit abgelaufen'); return; }
-      try {
-        const chess = chessFrom(g.fen), promotion = ['q', 'r', 'b', 'n'].includes(d.promotion) ? d.promotion : 'q';
-        const move = chess.move({ from: idxSquare(d.from), to: idxSquare(d.to), promotion });
-        if (!move) return s.emit('party:game-error', { gameId: g.id, message: 'Ungültiger Schachzug.' });
-        g.fen = chess.fen(); g.moves.push({ from: d.from, to: d.to, promotion: move.promotion || '', san: move.san });
-        g.turnIndex[side] = (g.turnIndex[side] || 0) + 1; g.lastTick = Date.now();
-        io.to(r.code).emit('game:move', { gameId: g.id, from: d.from, to: d.to, promotion: move.promotion || '', by: s.id });
-        if (chess.isCheckmate()) finishPartyMatch(r, g, side, 'Schachmatt');
-        else if (chess.isDraw() || chess.isStalemate()) finishPartyMatch(r, g, null, 'Remis');
-        else { notifyPartyGameUpdate(r, g); emitParty(r); }
-      } catch (e) { s.emit('party:game-error', { gameId: g.id, message: 'Der Zug konnte nicht geprüft werden.' }); }
-      return;
-    }
     if (d.from < 0 || d.from > 63 || d.to < 0 || d.to > 63) return;
-    const side = currentSide(r), actor = side === 'w' ? r.w : r.b;
-    if (s.id !== actor) return s.emit('game:error', { message: 'Du bist nicht am Zug.' });
-    try {
-      const chess = chessFrom(r.fen), promotion = ['q', 'r', 'b', 'n'].includes(d.promotion) ? d.promotion : 'q';
-      const move = chess.move({ from: idxSquare(d.from), to: idxSquare(d.to), promotion });
-      if (!move) return s.emit('game:error', { message: 'Ungültiger Schachzug.' });
-      r.fen = chess.fen();
-      r.moves = (r.moves || 0) + 1;
-      io.to(r.code).emit('game:move', { from: d.from, to: d.to, promotion: move.promotion || '', by: s.id });
-    } catch (e) { s.emit('game:error', { message: 'Ungültiger Schachzug.' }); }
+    const promotion = ['q', 'r', 'b', 'n'].includes(d.promotion) ? d.promotion : '';
+    r.moves = (r.moves || 0) + 1;
+    s.to(r.code).emit('game:move', { from: d.from, to: d.to, promotion, by: s.id });
   });
-  s.on('game:resign', d => {
-    const r = room();
-    if (r && r.kind === 'party') {
-      const key = U() && keyOf(U().name), g = r.matches && r.matches[String(d && d.gameId || '')];
-      if (!g || g.status !== 'playing') return;
-      const side = g.white.includes(key) ? 'w' : g.black.includes(key) ? 'b' : null;
-      if (side) finishPartyMatch(r, g, side === 'w' ? 'b' : 'w', 'Aufgegeben');
-      return;
-    }
-    if (r) s.to(r.code).emit('game:resign');
-  });
+  s.on('game:resign', () => { const r = room(); if (r) s.to(r.code).emit('game:resign'); });
   s.on('game:look', d => {
     const r = room(), u = U();
-    if (!r || r.kind === 'party' || !d || !u) return;
+    if (!r || !d || !u) return;
     const x = String(d.x || '');
     s.to(r.code).emit('game:look', { t: Number(d.t) | 0, c: String(d.c || '').slice(0, 9), x: SHOP[x] && u.owned.includes(x) ? x : '' });
   });
-  s.on('game:over', d => { const r = room(); if (r && r.kind !== 'party') claim(r, s, d && d.res); });
+  s.on('game:over', d => { const r = room(); if (r) claim(r, s, d && d.res); });
 
   // ---- Freunde und Herausforderungen ----
   const sendList = () => { const u = U(); if (u) s.emit('friend:list', { list: friendRows(u), keys: u.fr }); };
@@ -945,10 +420,10 @@ io.on('connection', s => {
     start(newRoom('friend', inv.tc, w, b));      // Freundes-Spiel: kein Elo, kein Gold
   });
 
-  s.on('disconnect', () => { leave(s, false); offline(s); });
+  s.on('disconnect', () => { leave(s); offline(s); });
 });
 
 const PORT = process.env.PORT || 3000;
-loadUsers().then(loadParties).then(() => web.listen(PORT, () => console.log('Schach läuft auf Port ' + PORT)));
+loadUsers().then(() => web.listen(PORT, () => console.log('Schach läuft auf Port ' + PORT)));
 
 module.exports = { web };
